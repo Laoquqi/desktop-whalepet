@@ -317,6 +317,8 @@
   //    取最短分离轴在**穿过去**的时候会把你推到另一侧（看起来就是穿模了），
   //    按上一帧的方位贴回去则永远不会穿过去。
   var SOLID_GAP = 1          // 实体之间保留的缝（像素）。1px 肉眼看不出来，但保证"不重合"
+  // 实体推出/分离的每帧限幅：防深重叠（快速度抛掷砸进同伴、生成时重合）一步"瞬移"
+  var RESOLVE_MAX_STEP_PX = 64
   var lastSolidPos = null    // 上一次**已确认不和任何人重叠**的位置
   var solidBlocked = false   // 这一帧有没有被同伴挡住（给"碰上了"的反馈用）
   function solidPeers() {
@@ -418,6 +420,17 @@
       return prev ? [prev[0], prev[1]] : pos
     }
     var out = [m.l - a.dx, m.t - a.dy]
+    // ⚠️ **修正量限幅**：深重叠时 pushOut 一步到位会把整只拖走 100~300px（用户看到的
+    //    "瞬移"）。限成每帧最多 64px，剩下的靠后续帧继续收敛 —— 肉眼是"较快滑出"
+    //    而不是"闪现"。没分干净就不更新 lastSolidPos（prev 保持"干净帧"语义，
+    //    兜底退回才不会退进重叠里）。
+    var ddx = out[0] - pos[0], ddy = out[1] - pos[1]
+    var ddist = Math.hypot(ddx, ddy)
+    if (ddist > RESOLVE_MAX_STEP_PX) {
+      out = [pos[0] + ddx / ddist * RESOLVE_MAX_STEP_PX, pos[1] + ddy / ddist * RESOLVE_MAX_STEP_PX]
+      if (!overlapsAny(rectOf(out, a), ps)) lastSolidPos = [out[0], out[1]]
+      return out
+    }
     lastSolidPos = [out[0], out[1]]
     return out
   }
@@ -771,6 +784,14 @@
   //    它内部会走 endDrag → settle → express()，而此时它的 state 是**拖动前**的旧值 ——
   //    采纳它就会把她拽回拖动前的位置。所以刚拖完的一小段时间里只重写、不采纳。
   var ignoreWidgetPosUntil = 0
+  // styleObs 刚把挂件的过期写入改回去的时刻。挂件的 state 与真实位置脱节后，
+  // 它的 express 会反复写过期位置；"采纳"逻辑（syncBackFromWidget / clampRendered）
+  // 如果在这个窗口里跑，会把刚改回去的过期值又采纳成真值 —— 表现就是瞬移。
+  // 所以：被改回后的 300ms 内，一切"采纳"都冻结。
+  var lastWidgetStyleWriteAt = 0
+  function widgetWriteCooldown() {
+    return Date.now() - lastWidgetStyleWriteAt < 300
+  }
   function syncBackFromWidget() {
     if (!root || drag || mode) return
     // 朝向也要定期重新应用：挂件会按它**过期的** state.flip 把 dshwv-left 改回去。
@@ -778,6 +799,9 @@
     updateFacing()
     if (root.style.getPropertyPriority('left') === 'important') return   // 还是我们写的
     if (Date.now() < ignoreWidgetPosUntil) { applyOverride(); return }   // 刚拖完，它的值是旧的
+    // ⚠️ 挂件的过期 express 刚被 styleObs 改回去 → 冷却窗内**不采纳**：
+    //    不然采纳逻辑会把刚改回去的过期值又变成真值（实测瞬移 147~391px 的元凶）。
+    if (widgetWriteCooldown()) { applyOverride(); return }
     var l = parseFloat(root.style.left)
     var t = parseFloat(root.style.top)
     if (!isFinite(l) || !isFinite(t)) { applyOverride(); return }
@@ -845,6 +869,19 @@
     }
     stopPhysics()                 // 蓄力期间不跑物理
     mode = null
+    // ⚠️ **把挂件自己的拖拽态收掉。** 右键按下被转发事件误报成"左键按下"时，
+    //    挂件（v757 起立绘自己接指针）也会开始它自己的拖拽 —— 而蓄力期间我们
+    //    会拦掉所有 pointermove，挂件的 pointerup 分支也走不到，它的 drag 就
+    //    **一直挂着**：下一次点击的 pointerup 会让它按"位移 = 当前位置 − 右键
+    //    按下点"把她瞬移走（用户看到的"小鲸鱼虚影/乱飘"就是这个）。
+    //    补发一个 pointercancel 让挂件走 endDrag(取消) 把状态收干净。
+    try {
+      suppressCancel = true
+      document.dispatchEvent(new PointerEvent('pointercancel', {
+        bubbles: true, cancelable: false, pointerType: 'mouse',
+      }))
+    } catch (err) {} finally { suppressCancel = false }
+    ignoreWidgetPosUntil = Date.now() + 600
     log('进入弹弓蓄力（锚点 ' + Math.round(physPos[0]) + ',' + Math.round(physPos[1]) + '）')
     applySlingVisual()
     return true
@@ -1131,6 +1168,13 @@
     var hit = false
     try { hit = typeof window.__petWhaleHit === 'function' && window.__petWhaleHit(e.clientX, e.clientY) } catch (err) {}
     if (!hit) return
+
+    // ⚠️ **已经有一只"手"按着她时，绝不能重新建拖拽态。**
+    //    右键蓄力就是踩在这里：转发过来的 pointerdown 不带 button（一律 0），
+    //    按住左键时的右键按下会被误判成"又按了一次左键"，把 drag 连同抓取点、
+    //    锚点一起覆盖掉 —— 表现为右键拖动经常没反应。
+    //    真实鼠标本来就不可能不松左键再来一次左键按下，所以这里直接放行。
+    if (drag) return
 
     // 她正在飞（拖拽抛出 / 生气弹跳）→ 这一按就是"抓住她"：**立刻停掉抛掷**。
     // 否则 16ms 一次的物理 tick 还在按抛掷轨迹挪她，而手一抖（≥3px 判成拖动）
@@ -1485,6 +1529,12 @@
     var cy = Math.min(Math.max(r.top, b.top), maxY)
     // 1px 容差：正好贴边时别来回微调（那会看出抖）
     if (Math.abs(cx - r.left) <= 1 && Math.abs(cy - r.top) <= 1) return
+    // ⚠️ 冷却窗内渲染位置 ≠ physPos 时，那是挂件刚写过的过期值 —— 夹取采纳它
+    //    等于把过期值变成真值（瞬移）。改回 physPos 才是对的。
+    if (widgetWriteCooldown() && (Math.abs(cx - physPos[0]) > 2 || Math.abs(cy - physPos[1]) > 2)) {
+      applyOverride()
+      return
+    }
     physPos = [cx, cy]
     // 拖动中我们的 physPos 就是真值来源，写回它即可；没在拖时同样成立
     applyOverride()
@@ -1578,6 +1628,7 @@
         var wantT = Math.round(physPos[1]) + 'px'
         if (curL === wantL && curT === wantT) return   // 就是我们要的值，别自己喂自己
         // 留一条日志：万一还有"她瞬移"的情况，日志里能直接看到是挂件写的、我们改回来了
+        lastWidgetStyleWriteAt = Date.now()   // 触发 300ms 采纳冷却（见 lastWidgetStyleWriteAt 的说明）
         log('挂件改了位置(' + curL + ',' + curT + ') → 已改回(' + wantL + ',' + wantT + ')')
         applyOverride()
       })

@@ -232,6 +232,16 @@
   //    · **位置分离**（dx/dy）保证"绝不留着重合"—— 和渲染端的 resolveSolid 一起收口
   //    · **冲量**（dv）负责"街机手感"（恢复系数/摩擦/质量分摊），
   //      只有物理开关开着才吃（关着时"松手不抛"是用户的明确选择）
+  // 单条冲量/分离消息的**幅度上限**。碰撞世界跑在 50ms 前的旧位置数据上，
+  // 高速相撞（比如生气弹跳砸进同伴）时算出来的量可能大得离谱 ——
+  // 不封顶的表现就是用户报的"乱飞和瞬移"。超限的量靠后续 tick 继续收敛。
+  var MAX_IMPULSE_DV = 1500    // px/s：一次冲量最多改这么多速度
+  var MAX_SEPARATE_PX = 48     // px：一次分离最多挪这么多距离
+  function clampMag(v, max) {
+    var m = Math.hypot(v[0], v[1])
+    if (m <= max || m === 0) return v
+    return [v[0] / m * max, v[1] / m * max]
+  }
   function onImpulse(d) {
     if (!d) return
     var p = phys()
@@ -239,17 +249,19 @@
     // 被拖着 / 弹弓蓄力中：位置由指针（或锚点+鼠标）决定，推了下一帧就被覆盖，
     // 表现为抖 —— 整个跳过。对方会照常被弹开，看起来就是"撞上去被弹住了"。
     if (p.isDragging && p.isDragging()) return
+    var dv = clampMag([d.dvx || 0, d.dvy || 0], MAX_IMPULSE_DV)
+    var dp = clampMag([d.dx || 0, d.dy || 0], MAX_SEPARATE_PX)
     if (window.__dshpetIsExtra === false) {
       // 第一只"撞不动"（用户要求"保持在右下角"）：别人撞过来时让开的是别人。
       // 但她自己撞到别人（速度冲量）还是要弹 —— 所以只跳过位置分离。
-      if (p.applyImpulse && (Math.abs(d.dvx) > 0.01 || Math.abs(d.dvy) > 0.01)) {
-        p.applyImpulse(d.dvx, d.dvy)
+      if (p.applyImpulse && (Math.abs(dv[0]) > 0.01 || Math.abs(dv[1]) > 0.01)) {
+        p.applyImpulse(dv[0], dv[1])
       }
       return
     }
-    if (p.nudge && (Math.abs(d.dx) > 0.01 || Math.abs(d.dy) > 0.01)) p.nudge(d.dx, d.dy)
-    if (p.applyImpulse && (Math.abs(d.dvx) > 0.01 || Math.abs(d.dvy) > 0.01)) {
-      p.applyImpulse(d.dvx, d.dvy)
+    if (p.nudge && (Math.abs(dp[0]) > 0.01 || Math.abs(dp[1]) > 0.01)) p.nudge(dp[0], dp[1])
+    if (p.applyImpulse && (Math.abs(dv[0]) > 0.01 || Math.abs(dv[1]) > 0.01)) {
+      p.applyImpulse(dv[0], dv[1])
     }
     report()
   }

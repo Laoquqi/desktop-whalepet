@@ -157,7 +157,10 @@ function setPetsYieldForFullscreen(hidden) {
       if (hidden) {
         w.__fsWasVisible = w.isVisible()
         if (w.isVisible()) w.hide()
+        // 藏着的时候定时器没必要全速跑：打开节流（恢复时关掉）
+        try { w.webContents.setBackgroundThrottling(true) } catch (err) {}
       } else if (w.__fsWasVisible) {
+        try { w.webContents.setBackgroundThrottling(false) } catch (err) {}
         w.showInactive()                       // 不抢焦点：视频刚退出全屏，别把前台抢过来
         w.__fsWasVisible = false
       }
@@ -323,6 +326,11 @@ function makePetWindow(port, primary) {
       nodeIntegration: false,
       backgroundThrottling: false,
       spellcheck: false,
+      // ⚠️ **所有桌宠共用一个渲染进程**（同 affinity 的窗口由 Electron 合并到同一进程）。
+      //    每个独立渲染进程都是一整套 Chromium（实测 60~150MB）—— 多开几只内存直接翻倍。
+      //    这些页面同源、同版本、同生命周期，合在一起没有任何隔离损失；
+      //    代价是"一只的渲染进程崩了全体崩"（渲染崩溃本来就会整页重载，可接受）。
+      affinity: 'dafatfish-pet',
     },
   })
 
