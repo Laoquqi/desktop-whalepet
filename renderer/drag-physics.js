@@ -261,7 +261,8 @@
       if (vn >= -80) continue                                   // 分离中 / 低速接触
       if (now - (peerBounceAt[p.id] || 0) < 120) continue       // 同一对的冷却
       peerBounceAt[p.id] = now
-      var e = 0.82
+      // 恢复系数 0.95：用户要求"反弹力度要大"——几乎无损的弹性碰撞
+      var e = 0.95
       var jn = -(1 + e) * vn / sumInv
       var myDvx = -jn * c.nx * invMe, myDvy = -jn * c.ny * invMe
       physVel[0] += myDvx; physVel[1] += myDvy
@@ -1917,7 +1918,7 @@
       if (!root) return false
       if (isFinite(dx) && isFinite(dy)) {
         var m2 = Math.hypot(dx, dy)
-        if (m2 > 48) { dx = dx / m2 * 48; dy = dy / m2 * 48 }
+        if (m2 > 64) { dx = dx / m2 * 64; dy = dy / m2 * 64 }
         if (m2 > 0.01) physPos = clampToBounds([physPos[0] + dx, physPos[1] + dy])
       }
       if (isFinite(dvx) && isFinite(dvy) && (Math.abs(dvx) > 0.01 || Math.abs(dvy) > 0.01)) {

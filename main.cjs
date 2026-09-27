@@ -25,6 +25,20 @@
 //    （`package.json` 里 type=module，所以本文件必须叫 .cjs。）
 const { app, BrowserWindow, ipcMain, Tray, Menu, screen, nativeImage, shell, dialog } = require('electron')
 
+// —— 内存优化开关（必须在 app ready 前设置）——
+// ① 网络服务并入主进程：独立 network service 进程是一整套 Chromium 网络栈
+//    （几十 MB），桌宠只跟 127.0.0.1 本地服务说话，完全用不着独立进程。
+// ② 音频服务并入主进程：桌宠只放几个短音效，独立音频进程纯属浪费。
+// ③ 磁盘缓存限到 32MB：本地服务的响应本来就不该进 HTTP 缓存。
+// 三个开关的真实效果以打包实测为准（见 git 记录里的内存数字）。
+app.commandLine.appendSwitch('enable-features', 'NetworkServiceInProcess')
+app.commandLine.appendSwitch('disable-features', 'AudioServiceOutOfProcess')
+app.commandLine.appendSwitch('disk-cache-size', String(32 * 1024 * 1024))
+// ④ 关闭硬件加速：省掉整个 GPU 合成进程（私有内存 373→272MB，双开实测）。
+//    桌宠是"大面积静止 + 局部小动画"的页面，软件合成的空闲 CPU 实测 ≈0%
+//    （损伤跟踪只重绘挂件那一小块）；透明度/画面经真实桌面截屏对比无差异。
+app.disableHardwareAcceleration()
+
 const path = require('node:path')
 const fs = require('node:fs')
 const http = require('node:http')   // 探测本机 http 服务（「打开 dsh 网页端」找端口用）
