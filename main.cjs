@@ -132,6 +132,40 @@ let tray = null
 let quitting = false
 let interactive = false
 
+// —— 全屏让路 —— 前台是铺满主屏的应用（视频全屏 / 无边框播放器 / F11…）时，
+// 把所有桌宠窗口藏起来（"退到视频后面"），全屏结束再放回来。托盘里可关。
+let fsWatch = null
+let fsWatchModRef = null                       // 模块引用：托盘里现开时要能创建实例
+let fsYieldEnabled = true                      // 默认开（用户要的行为就是默认发生）
+let fsYieldActive = false                      // 当前正处于"全屏 → 已藏"状态
+const PREFS_FILE = () => path.join(DATA_DIR, 'pet-prefs.json')
+function loadFsYieldPref() {
+  try {
+    const j = JSON.parse(fs.readFileSync(PREFS_FILE(), 'utf8'))
+    if (typeof j.fullscreenYield === 'boolean') fsYieldEnabled = j.fullscreenYield
+  } catch (err) {}
+}
+function saveFsYieldPref() {
+  try { fs.writeFileSync(PREFS_FILE(), JSON.stringify({ fullscreenYield: fsYieldEnabled }), 'utf8') } catch (err) {}
+}
+function setPetsYieldForFullscreen(hidden) {
+  if (hidden === fsYieldActive) return
+  fsYieldActive = hidden
+  for (const w of pets) {
+    try {
+      if (w.isDestroyed()) continue
+      if (hidden) {
+        w.__fsWasVisible = w.isVisible()
+        if (w.isVisible()) w.hide()
+      } else if (w.__fsWasVisible) {
+        w.showInactive()                       // 不抢焦点：视频刚退出全屏，别把前台抢过来
+        w.__fsWasVisible = false
+      }
+    } catch (err) {}
+  }
+  log('全屏让路：' + (hidden ? '前台进入全屏 → 桌宠已让路（隐藏）' : '全屏结束 → 桌宠回来了'))
+}
+
 const SELFTEST = !!process.env.PET_SELFTEST
 // 聚焦模式：只跑一条探针，跳过完整自检里那些很慢的段落（抛掷仿真要等 11.5 秒…）。
 // 用途是**排查"偶发"的交互 bug**：那种 bug 要反复试几十次才能撞上，
@@ -164,16 +198,18 @@ async function loadLib() {
   const shellMod = await import(u('lib/shell.js'))
   const nowPlayingMod = await import(u('lib/now-playing.js'))
   const lyricsMod = await import(u('lib/lyrics.js'))
-  return { serverMod, shimMod, credMod, turnsMod, shellMod, nowPlayingMod, lyricsMod }
+  const fsWatchMod = await import(u('lib/fullscreen-watch.js'))
+  return { serverMod, shimMod, credMod, turnsMod, shellMod, nowPlayingMod, lyricsMod, fsWatchMod }
 }
 
 // ---------------------------------------------------------------------------
 // 启动宿主
 // ---------------------------------------------------------------------------
 async function bootHost() {
-  const { serverMod, shimMod, credMod, turnsMod, shellMod, nowPlayingMod: npm, lyricsMod } = await loadLib()
+  const { serverMod, shimMod, credMod, turnsMod, shellMod, nowPlayingMod: npm, lyricsMod, fsWatchMod } = await loadLib()
   nowPlayingMod = npm
   lyricsModRef = lyricsMod
+  fsWatchModRef = fsWatchMod
 
   server = serverMod.createServer({ log })
   credentials = credMod.createCredentials({ dataDir: DATA_DIR, log })
@@ -192,6 +228,22 @@ async function bootHost() {
     onUpdate: (song) => { pushNowPlaying(song) },
   })
   nowPlaying.start()
+
+  // 「全屏让路」：前台是铺满主屏的应用（视频全屏 / 无边框播放器 / F11…）时，
+  // 把桌宠窗口藏起来别挡视频，全屏结束再放回来。托盘里有一项开关（默认开）。
+  // ⚠️ 自检模式别开 —— 自检会切窗口、弹面板，前台窗口一变就把桌宠藏了，
+  //    断言全乱（桌宠"不见了"对自检来说和崩了没区别）。
+  loadFsYieldPref()
+  if (fsYieldEnabled && !SELFTEST) {
+    fsWatch = fsWatchMod.createFullscreenWatch({
+      log,
+      ownPid: process.pid,
+      onFullscreen: (hidden) => setPetsYieldForFullscreen(hidden),
+    })
+    fsWatch.start()
+    log('全屏让路已启用（托盘里可关）')
+  }
+
   // 「每轮消耗」的替代数据源：拦截 /dsh-whale/last-turn.json
   // 必须在插件 apply() 之前登记，否则原处理器已经挂上去了。
   shim.override('/dsh-whale/last-turn.json', turns.handleLastTurn)
@@ -953,6 +1005,25 @@ function buildTray() {
         type: 'checkbox',
         checked: true,
         click: (item) => win && win.webContents.send('pet:drag-physics', !!item.checked),
+      },
+      {
+        label: '全屏视频时自动让路（隐藏桌宠，不挡视频）',
+        type: 'checkbox',
+        checked: fsYieldEnabled,
+        click: (item) => {
+          fsYieldEnabled = !!item.checked
+          saveFsYieldPref()
+          if (fsYieldEnabled && !fsWatch && fsWatchModRef) {
+            fsWatch = fsWatchModRef.createFullscreenWatch({
+              log,
+              ownPid: process.pid,
+              onFullscreen: (hidden) => setPetsYieldForFullscreen(hidden),
+            })
+          }
+          if (fsWatch) fsWatch.setEnabled(fsYieldEnabled)
+          if (!fsYieldEnabled) setPetsYieldForFullscreen(false)   // 关掉时把藏着的放回来
+          log('全屏让路开关 → ' + fsYieldEnabled)
+        },
       },
       { type: 'separator' },
       { label: '打开数据目录', click: () => shell.openPath(DATA_DIR) },
@@ -6256,6 +6327,7 @@ if (!app.requestSingleInstanceLock()) {
     // 必须显式收掉：常驻的 PowerShell 是**子进程**，主进程退出它不一定跟着走，
     // 留下一个没人管的 powershell.exe 会一直轮询媒体会话。
     try { nowPlaying && nowPlaying.stop() } catch (err) {}
+    try { fsWatch && fsWatch.stop() } catch (err) {}
     try { shim && shim.disposeAll() } catch (err) {}
     try { server && server.stop() } catch (err) {}
     log('=== 退出 ===')

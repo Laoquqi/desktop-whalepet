@@ -1132,6 +1132,15 @@
     try { hit = typeof window.__petWhaleHit === 'function' && window.__petWhaleHit(e.clientX, e.clientY) } catch (err) {}
     if (!hit) return
 
+    // 她正在飞（拖拽抛出 / 生气弹跳）→ 这一按就是"抓住她"：**立刻停掉抛掷**。
+    // 否则 16ms 一次的物理 tick 还在按抛掷轨迹挪她，而手一抖（≥3px 判成拖动）
+    // 拖拽合帧又开始按指针挪她 —— **两路同时写位置**，表现为抽搐、抓不住、
+    // 一松手她自己又跳走。抓下来之后这一按就是普通的拖拽/点击，行为完全一致。
+    if (mode === 'throw') {
+      stopPhysics()
+      applyOverride()
+    }
+
     // ⚠️ 不拦 pointerdown：点击弹气泡、按压音效都挂在挂件那一条链上。
     //    这里只记录起点，真正的接管发生在 pointermove / pointerup。
     var r = root.getBoundingClientRect()
