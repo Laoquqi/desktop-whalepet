@@ -274,9 +274,16 @@
     // 不然在面板里调设置、点菜单，也会被算成连点/抚摸。
     try {
       var el = document.elementFromPoint(x, y)
-      if (el && el.closest && el.closest(
-        '.dshwv-menu, .dshwv-pop, .dshwv-rolelist, .dshwv-menu-btn, ' +
-        '.dshpet-exp-panel, .dshrice-menu')) return false
+      if (el && el.closest) {
+        // 【修复】她的**泡泡**算"点她"：连点她时第一下就会弹出余额泡泡，
+        //   泡泡盖在她上方一大片，用户接着点的这部分全落在泡泡上 ——
+        //   原来这里把 .dshwv-pop 一律排除，导致"点 18 次没生气"（大半点击没被计数）。
+        //   菜单/面板仍是 UI，照旧排除。
+        if (el.closest('.dshwv-pop')) return true
+        if (el.closest(
+          '.dshwv-menu, .dshwv-rolelist, .dshwv-menu-btn, ' +
+          '.dshpet-exp-panel, .dshrice-menu')) return false
+      }
     } catch (e) {}
     try {
       if (typeof window.__petWhaleHit === 'function') return !!window.__petWhaleHit(x, y)
@@ -322,8 +329,13 @@
     if (!hitHer(e.clientX, e.clientY)) return
     var now = Date.now()
     var win = Math.max(1, Number(cfg.angryWindowSec) || 3) * 1000
+    // 【修复】从"滚动窗口"改为"间隔判定"：只看**相邻两次点击**的间隔有没有超过窗口。
+    //   原来是"窗口秒内的点击总数" —— 默认 3 秒装 18 次 = 每秒 6 次才凑得满，
+    //   真人连点一般每秒 3~5 次，点满 18 次时最早的点击早已被窗口挤掉 → 永远不生气。
+    //   "连点"的本意是"中间没停太久"，所以只在停顿超过窗口时清空重来。
+    var last = clickTimes.length ? clickTimes[clickTimes.length - 1] : 0
+    if (now - last > win) clickTimes = []
     clickTimes.push(now)
-    clickTimes = clickTimes.filter(function (t) { return now - t <= win })
     touchIdle()
     var need = Math.max(3, Number(cfg.angryClicks) || 18)
     if (clickTimes.length >= need) {
@@ -458,7 +470,7 @@
     panel.appendChild(row('眨眼间隔 最短', 'blinkMinSec', 1, 60, '秒'))
     panel.appendChild(row('眨眼间隔 最长', 'blinkMaxSec', 1, 120, '秒'))
     panel.appendChild(row('连点几次生气', 'angryClicks', 3, 100, '次'))
-    panel.appendChild(row('连点判定窗口', 'angryWindowSec', 1, 30, '秒'))
+    panel.appendChild(row('连点最大间隔', 'angryWindowSec', 1, 30, '秒'))
     panel.appendChild(row('长按多久害羞', 'shySec', 2, 60, '秒'))
     panel.appendChild(row('多久没互动失落', 'disappointedMin', 1, 240, '分钟'))
     panel.appendChild(row('余额低于多少疲惫', 'exhaustedYuan', 0, 100000, '元'))
