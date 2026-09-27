@@ -1,0 +1,107 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<title>大肥鱼桌宠 · 设置</title>
+<style>
+  :root { color-scheme: light; }
+  body {
+    margin: 0; padding: 18px 20px;
+    font: 13px/1.7 -apple-system, "Microsoft YaHei", system-ui, sans-serif;
+    color: #2b3350; background: #f7f9fc;
+  }
+  h1 { font-size: 15px; margin: 0 0 4px; }
+  p.sub { margin: 0 0 14px; color: #6b7794; font-size: 12px; }
+  label { display: block; font-weight: 600; margin-bottom: 6px; }
+  input[type=password], input[type=text] {
+    width: 100%; box-sizing: border-box;
+    padding: 8px 10px; font: 13px/1.4 ui-monospace, Consolas, monospace;
+    border: 1px solid #c7d0e3; border-radius: 8px; background: #fff; outline: none;
+  }
+  input:focus { border-color: #536ba9; box-shadow: 0 0 0 3px rgba(83,107,169,.15); }
+  .row { display: flex; gap: 8px; align-items: center; margin-top: 6px; }
+  .status { font-size: 12px; color: #6b7794; }
+  .status.ok { color: #2fa24f; }
+  .status.no { color: #e0433f; }
+  .btns { display: flex; gap: 8px; margin-top: 18px; }
+  button {
+    padding: 7px 16px; border-radius: 8px; border: 1px solid #c7d0e3;
+    background: #fff; color: #2b3350; cursor: pointer; font-size: 13px;
+  }
+  button.primary { background: #536ba9; border-color: #536ba9; color: #fff; }
+  button:hover { filter: brightness(.97); }
+  .note {
+    margin-top: 14px; padding: 9px 11px; border-radius: 8px;
+    background: #eef2fa; font-size: 12px; color: #5a6788;
+  }
+  code { background: #e8edf7; padding: 1px 5px; border-radius: 4px; }
+</style>
+</head>
+<body>
+  <h1>DeepSeek API Key</h1>
+  <p class="sub">挂件要靠它查余额。密钥只存在你自己的电脑上，不会上传到任何地方。</p>
+
+  <label for="key">API Key</label>
+  <input id="key" type="password" placeholder="sk-…" autocomplete="off" spellcheck="false">
+  <div class="row">
+    <span id="status" class="status">读取中…</span>
+  </div>
+
+  <div class="btns">
+    <button id="save" class="primary">保存</button>
+    <button id="clear">清除</button>
+    <button id="close">关闭</button>
+  </div>
+
+  <div class="note">
+    存放位置：<code id="datadir">…</code> 下的 <code>credentials.json</code>（仅本机可读）。<br>
+    保存后挂件会自动重新加载，不必手动重启。
+  </div>
+
+<script>
+(function () {
+  var api = window.petApi || {};
+  var $key = document.getElementById('key');
+  var $st = document.getElementById('status');
+
+  function setStatus(text, cls) {
+    $st.textContent = text;
+    $st.className = 'status' + (cls ? ' ' + cls : '');
+  }
+
+  async function refresh() {
+    try {
+      var s = await api.credStatus();
+      if (s && s.configured) setStatus('已配置（输入新值可覆盖）', 'ok');
+      else setStatus('尚未配置 —— 挂件会显示「未配置 API Key」', 'no');
+    } catch (e) { setStatus('状态读取失败', 'no') }
+  }
+
+  document.getElementById('save').addEventListener('click', async function () {
+    var v = $key.value.trim();
+    if (!v) { setStatus('请先填入 API Key', 'no'); return }
+    var ok = await api.credSet(v);
+    $key.value = '';
+    setStatus(ok ? '已保存，挂件正在重新加载…' : '保存失败，请查看日志', ok ? 'ok' : 'no');
+    refresh();
+  });
+
+  document.getElementById('clear').addEventListener('click', async function () {
+    var ok = await api.credSet('');
+    setStatus(ok ? '已清除' : '清除失败', ok ? 'ok' : 'no');
+    refresh();
+  });
+
+  document.getElementById('close').addEventListener('click', function () { api.closeSettings && api.closeSettings() });
+
+  (async function () {
+    try {
+      var d = await api.getDataDir();
+      document.getElementById('datadir').textContent = d || '(未知)';
+    } catch (e) {}
+    refresh();
+  })();
+})();
+</script>
+</body>
+</html>

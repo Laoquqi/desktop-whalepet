@@ -1,0 +1,36 @@
+MIT License
+
+Copyright (c) 2026 MeteorNOX —— 上游项目 DeepSeek-Balance-Whale-Widget
+https://github.com/MeteorNOX/DeepSeek-Balance-Whale-Widget
+
+---
+
+本程序（大肥鱼桌宠）是该上游项目的衍生整合版：
+
+- 底座：dsh-whale-widget 0.3.7（MeteorNOX），源码位于 vendor/whale/，**未作修改**
+- 叠加：dsh-rice-widget 0.3.4（衍生自上述项目），源码位于 vendor/rice/，
+  仅作了 2 处可移植性修补（见文件内的【桌宠移植补丁】注释）
+- 桌面外壳（main.js / lib/ / renderer/）：MIT，作者 Ark
+
+按 MIT 许可的要求，上游版权声明一并保留在此。
+素材（assets/）不在 MIT 覆盖范围内，来源与权利状态见 PROVENANCE.md。
+
+---
+
+Permission is hereby granted, free of charge, to any person obtaining a copy
+of this software and associated documentation files (the "Software"), to deal
+in the Software without restriction, including without limitation the rights
+to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+copies of the Software, and to permit persons to whom the Software is
+furnished to do so, subject to the following conditions:
+
+The above copyright notice and this permission notice shall be included in all
+copies or substantial portions of the Software.
+
+THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
+SOFTWARE.

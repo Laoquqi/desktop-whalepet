@@ -1,0 +1,25 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<!-- 同源架构：页面本身由本地服务发出，所以所有 /dsh-whale/* /dsh-rice/* 都是同源请求，
+     挂件里的绝对路径不用做任何改写。CSP 因此可以收得很紧。 -->
+<meta http-equiv="Content-Security-Policy"
+      content="default-src 'self'; img-src 'self' data: blob:; media-src 'self' data: blob:; font-src 'self' data:; style-src 'self' 'unsafe-inline'; script-src 'self'; connect-src 'self'; object-src 'none'; base-uri 'none'; form-action 'none'">
+<title>大肥鱼桌宠</title>
+<link rel="stylesheet" href="/shell.css">
+</head>
+<body>
+  <!-- ⚠️ 挂件的启动锚点（隐藏）。
+       whale-widget.js 启动前会做一次页面自检（dshwIsChatRoot）：找不到 composer 输入区就
+       **一行 DOM 都不碰、彻底不初始化**。这里放一个隐藏的 [data-composer-input] 满足判定 ——
+       比改原版代码干净得多。 -->
+  <div id="root">
+    <div class="composer-placeholder" data-composer-input="true" aria-hidden="true"></div>
+  </div>
+
+  <div id="boot-hint"></div>
+
+  <script src="/shell.js"></script>
+</body>
+</html>

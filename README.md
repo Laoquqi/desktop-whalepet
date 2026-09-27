@@ -1,0 +1,366 @@
+# 大肥鱼桌宠
+
+把小鲸鱼余额挂件 **[dsh-whale-widget](https://github.com/MeteorNOX/DeepSeek-Balance-Whale-Widget) 0.3.16**
+做成一只**桌面宠物**，并合入 **dsh-rice-widget 0.3.4** 的「偷吃白饭」玩法。
+
+> ### ⚠️ 署名（上游要求，请勿删除）
+>
+> - 小鲸鱼挂件来自 **MeteorNOX/DeepSeek-Balance-Whale-Widget**：
+>   https://github.com/MeteorNOX/DeepSeek-Balance-Whale-Widget
+> - 「偷吃白饭」来自 **Ark/dsh-rice-widget**（衍生自上述项目）
+>
+> 本程序是**整合 / 移植的衍生作品**，非原创。完整来源与许可见
+> [`署名与许可.md`](署名与许可.md)、[`PROVENANCE.md`](PROVENANCE.md)、[`LICENSE`](LICENSE)。
+> **转发时请一并保留这些文件。**
+
+---
+
+## 一、怎么跑
+
+**双击根目录的 `大肥鱼桌宠.exe`** 就行 —— 那是**便携版单文件**（107MB），不用安装、不用 Node、不用命令行，拷到哪都能跑，也方便直接发给别人。
+
+启动更快的另一个选择：`dist\win-unpacked\大肥鱼桌宠.exe`（免安装目录版）。
+它是同一个程序的展开形态，**启动比便携版快几秒**（便携版每次要先解压到临时目录）。
+缺点是不能只拷那一个 exe，得整个 `win-unpacked` 文件夹一起。
+
+| 形态 | 路径 | 体积 | 说明 |
+|---|---|---|---|
+| 便携版（单文件） | `大肥鱼桌宠.exe` | 107 MB | 双击即用、方便分享；每次启动解压到临时目录，稍慢 |
+| 免安装目录版 | `dist\win-unpacked\大肥鱼桌宠.exe` | 376 MB | 启动快；需整个文件夹一起拷 |
+
+**首次使用**：托盘图标（右下角）→ 右键 →「设置 DeepSeek API Key…」填入你的 key，挂件才会显示余额。
+
+### 从源码运行 / 自己打包
+
+```sh
+npm install                       # Electron + electron-builder
+npm start                         # 直接跑源码
+npm run build                     # 打包（产出 dist/ 下的便携版与目录版）
+npm run selftest                  # 端到端自检（不弹窗口，跑完打印结论）
+npm run test:host                 # 只测宿主：路由 / 信任栅栏 / 异常隔离 / 数据落盘
+```
+
+> **装 Electron 卡住？** 官方源在国内可能只有几十 KB/s。先设镜像再装：
+> ```sh
+> set ELECTRON_MIRROR=https://npmmirror.com/mirrors/electron/
+> set ELECTRON_BUILDER_BINARIES_MIRROR=https://npmmirror.com/mirrors/electron-builder-binaries/
+> npm install
+> ```
+> 另外 `npm install electron` **不一定**会触发二进制下载，必要时手动跑一次：
+> `node node_modules/electron/install.js`
+
+---
+
+## 二、它做了什么
+
+### 2.1 底座：官方挂件 0.3.16（功能全保留）
+
+余额 / 今日已用 / 峰谷定价、自定义泡泡点击序列、逐行样式与字体、悬浮快捷编辑、
+音效与每轮消耗、自定义角色 / 动图 / 音效、吸附与翻转 —— 与网页版**同一份代码**。
+
+### 2.2 叠加：rice 0.3.4 的「偷吃白饭」
+
+每结算一轮，鲸鱼从下巴下方浮上来一碗白饭偷扒一口；**花得越多扒得越多**（一口 / 两口 / 三口）。
+忙时碗里更丰盛、闲时更素净；可开**随机偷吃**（掷骰子）；饭碗举着时**点她可以抓现行** ——
+碗里的饭一下没了，碗先往上飞、在空中翻过来、再掉下来**扣在她头上**，扣 2 秒后消失。
+另有「唱歌」按钮与彩蛋指令。
+
+### 2.3 新增：拖动物理
+
+**这一块不是移植上游，是新写的**（`renderer/drag-physics.js`），算法照搬 dsh-pet 桌宠的
+`pet/physics.py`（webm 桌宠那一套，不是挂件那套）：
+
+- **拖动时**以过阻尼弹簧跟随鼠标（K=200 / C=30）—— 有轻微滞后与回弹，不是硬跟手
+- **松手时**按拖拽轨迹估算初速抛出：重力 1400、撞边反弹 0.78、地面摩擦 2.5，静止后留在落点
+- **慢放不抛**：释放速度 < 500 px/s 原地放下（避免手一抖就飞出去）
+- 左右墙各留 `w/3` 悬挂余量（与 dsh-pet 一致）
+
+> **甩得越狠弹得越久，这是原版行为不是 bug**：实测把它的 `pet/physics.py` 单独跑起来，
+> 一次硬甩（v=3200,-2400）它自己也要 **10.18 秒**（第 636 步）才静止，全程在屏幕上弹。
+> 所以这里**没有**加任何"额外阻尼"去让它早点停 —— 要的就是一样。
+
+开关在小鲸鱼的 ☰ 菜单里（托盘也有同一项），默认**开**。
+
+#### ⚠️ 踩过的坑：`transition` 会让逐帧定位变成乱飞
+
+`.dshwv-root` 的基础样式里有 `transition:left .16s ease,top .16s ease`（挂件用它做平滑吸边）。
+物理是**每 16ms 写一次位置**，浏览器却给每一次变化都套上 **160ms 的补间** ——
+补间永远追不上新值，她就在"追赶 + 过冲"里抖，表现为**完全失控的乱飞**。
+
+挂件只在**它自己**拖拽时用 `.dshwv-dragging{transition:none}` 关掉它；抛掷阶段那个类已摘掉，
+过渡又回来了。所以接管方必须自己按住：
+
+```css
+.dshwv-root.dshpet-phys{
+  left: var(--dshpet-px) !important;
+  top:  var(--dshpet-py) !important;
+  transition: transform .3s ease !important;   /* 只保留翻转/缩放的过渡 */
+}
+```
+
+自检里有一条专门的回归断言盯着它：读计算后的 `transition-property`，
+**只要里面出现 `left`/`top` 就报错**。
+
+#### 为什么需要"接管"而不是"叠加"
+
+挂件自己有一套拖拽：位置写进**行内** `style.left/top`（它的 `express()`），松手还会按"吸附区"
+把她吸到屏幕边上。物理模式下这两件事都得让位，否则会互相打架。
+
+| 做法 | 原因 |
+|---|---|
+| 位置用带 `!important` 的类接管（`.dshwv-root.dshpet-phys`） | 行内样式打不过 `!important`；不加的话挂件任何一次 `express()`（改大小/改吸附/窗口尺寸变化）都会把她拉回旧位置 |
+| **同一个类里用 `!important` 掐掉 left/top 的 transition** | 见上面「踩过的坑」—— 不掐就是乱飞 |
+| **拦 `pointermove` / `pointerup`**（capture，`stopImmediatePropagation`） | 挂件的 pointermove 会按 1:1 写位置；pointerup 会做吸附。两个都要拦 |
+| **不拦 `pointerdown`** | 点击弹气泡、按压音效都挂在那条链上，拦了就废了 |
+| 拦下 pointerup 后补发一个 `pointercancel` | 让挂件自己把拖拽状态清干净，否则它的 `drag.active` 会一直挂着 |
+| 落点写回 `localStorage['dshw-pos']`（挂件的锚点格式） | 重启后位置不变 |
+| 开关切换时 `location.reload()` | 位置由谁接管变了，刷新是最稳的对齐方式（落点已落盘，刷新后在同一处） |
+
+> **监听顺序（容易想反）**：两者的监听器都在 `document` 的 capture 阶段，执行顺序 = 注册顺序。
+> 挂件的 `pointerdown` 是模块初始化时注册的（很早），但它的 `pointermove`/`pointerup`
+> 是**每次按下时才注册**的 —— 而我们是一次性注册的，所以反而更早、执行在前，拦得住 ✓
+
+---
+
+## 三、怎么保证「跟原来一致」
+
+**不重写、不移植 —— 直接跑原版代码。**
+
+`vendor/` 下就是两份原版源码。它们都是标准的 DSH 插件：
+
+```js
+export default { name, inject, apply(ctx) }
+```
+
+而它们总共只用到 **8 个 `ctx` 触点**：
+
+| 触点 | 桌宠里的实现 |
+|---|---|
+| `ctx.webServer.register` | 挂到本地 HTTP 服务（`lib/server.js`） |
+| `ctx.webServer.tapIndex` | 不需要（页面是我们自己的），仅记录 |
+| `ctx.get('connection')` / `ctx.connection.requestRejection` | 实现为 **Host 白名单校验**（`lib/dsh-shim.js`） |
+| `ctx.credentials.resolve` / `.set` | 本机 `credentials.json`（`lib/credentials.js`） |
+| `ctx.on('session/event')` / `('session/disposed')` | 事件总线（`lib/dsh-shim.js`） |
+| `ctx.effect` | 正常执行并登记清理 |
+
+于是 `main.cjs` 里就一句话：
+
+```js
+const whale = (await import('./vendor/whale/lib/index.js')).default
+whale.apply(shim.ctx)          // ← 原版代码，零改动
+```
+
+**动过原版的地方**（都写在文件里的注释处）：
+
+| 文件 | 改动 | 原因 |
+|---|---|---|
+| `vendor/rice/lib/index.js` | 路径改读 `DSH_HOME` 环境变量 | 原版硬编码 `~/.dsh`，会把配置写进用户真实的 DSH 目录 |
+| `vendor/rice/lib/index.js` | 素材目录 `art/` → `assets/` | 目录名统一（内容相同） |
+| `vendor/rice/lib/{index,client}.js` | **「抓现行」翻碗动画改成扣在她头上**，停留 2 秒后消失；新增配置 `spillLandLeft`/`spillLandTop` | 应分发者要求改的**功能**（不是移植）——原动画是倒在她旁边的地上 |
+| `vendor/whale/lib/index.js` | **无改动** | — |
+| `vendor/whale/assets/whale-widget.js` | **无改动** | — |
+| `vendor/whale/assets/whale-widget.js` | **无改动** | — |
+
+### 3.1 三个必须解决的「环境差」
+
+**① 挂件有 DSH 页面自检，找不到 composer 就完全不启动。**
+`whale-widget.js` 启动前会检查 `#root` 里有没有聊天输入区。桌宠页面里放了一个**隐藏的
+`[data-composer-input]` 占位元素**满足判定 —— 比改原版代码干净得多。
+
+**② 挂件用绝对路径 `/dsh-whale/...` 请求接口 —— 必须同源。**
+外壳页面**由本地服务自己发出**（`lib/shell.js`），而不是用 `file://` 打开。
+这样页面与所有 `/dsh-whale/*` `/dsh-rice/*` 天然同源，
+`fetch('/dsh-whale/balance.json')`、`img.src = '/dsh-whale/rua.gif'` 这些写法**不用做任何改写**就能命中。
+
+> 一开始试过 `file://` + 逐个改写 `fetch` / `img.src` / CSS `url()` 的做法 ——
+> 那是给一整类隐蔽 bug 开门（总有漏掉的加载路径）。改成同源之后这层 hack 整层删掉了，
+> 顺带还能用严格 CSP（`script-src 'self'`，不需要 `'unsafe-inline'`）。
+> 已验证两份前端**都没有用 `eval` / `new Function` / `Worker`**，所以严格 CSP 安全。
+
+**③ 「每轮消耗」原本来自 DSH 的会话事件 —— 桌宠里没有 DSH。**
+这是唯一的数据源缺口。`lib/turns.js` 用**账号级今日用量**（`/dsh-whale/balance.json` 的
+`todayUsage`）的增量来合成「一轮消耗」，再在服务层**拦截 `/dsh-whale/last-turn.json`** 下发。
+于是 rice 一行都不用改就能拿到每轮金额 —— 随机偷吃的骰子也就转得起来。
+
+> 为什么不用「余额下降」：余额下降分不清消费和充值 / 退款 / 换币种，
+> 而 `todayUsage` 已经把口径理好了（还顺带继承了上游的跨天归档与币种处理）。
+
+---
+
+## 四、窗口与交互
+
+- **全屏透明覆盖层**：挂件的尺寸是按视口百分比算的（`.dshwv-root` 用 `100vw/100vh` 做 clamp），
+  全屏覆盖层让同一套代码不用改就能定位。透明区域**鼠标穿透**，不挡桌面操作。
+- **穿透是自动的，而且按她的轮廓判定**：指针落在**她身上**时才接管鼠标，落在空白处一律穿透。
+  判定用两条判据取或：
+  1. `elementFromPoint` —— 覆盖菜单按钮、各种面板、rice 的元素（它们是 `pointer-events:auto`）；
+  2. **复刻挂件自己的逐像素命中图** —— 因为挂件把根节点和立绘都设成了 `pointer-events:none`，
+     光靠 `elementFromPoint` 在立绘上只会得到 `BODY`，**那样她就会完全点不动**（这是踩过的坑）。
+  所以**是"按她的轮廓"而不是"按一个方框"**：她身边的空白区域照样点得穿。
+- **拖动**：和网页版一样按住她拖；位置存在 `localStorage`，下次启动回到原处。
+  （`localStorage` 按 origin 隔离，所以本地服务**端口做了持久化**，否则每次重启都会复位。）
+- **托盘菜单**：显示 / 隐藏、设置 API Key、回到右下角、重新加载、**强制鼠标穿透**、
+  打开数据目录、打开日志、开发者工具、退出。
+
+---
+
+## 五、数据放在哪
+
+**全部在 `%APPDATA%\大肥鱼桌宠\`**（不碰你真实的 `~/.dsh`）：
+
+| 文件 | 内容 |
+|---|---|
+| `credentials.json` | DeepSeek API Key（权限 0600） |
+| `.dshw-*.json`、`whale-roles/`、`whale-audio/`、`whale-bubble-imgs/` | 挂件的设置、角色、音效、泡泡图 |
+| `.dsh-rice-config.json`、`.dsh-rice-state.json` | 偷吃白饭的设置与账目 |
+| `pet.log` | 运行日志（超过 2MB 自动轮转） |
+
+**想彻底重置**：退出桌宠，删掉整个 `%APPDATA%\大肥鱼桌宠` 文件夹。
+
+---
+
+## 六、网络请求（完整清单）
+
+**本程序新增的对外请求：无。**
+
+`lib/turns.js` 只请求本机的 `http://127.0.0.1:<port>/dsh-whale/balance.json`（不出去）。
+`lib/server.js` 只监听回环地址。凭据只写本机文件。
+
+**上游挂件本来就有的请求**（原样保留，不是我加的）：
+
+| 地址 | 用途 | 发送内容 | 失败时 |
+|---|---|---|---|
+| `https://api.deepseek.com/user/balance` | 查余额（默认厂商） | `Authorization: Bearer <你的 key>` | 显示「获取失败 · 点击重试」，回退上次成功值 |
+| 其它 30+ 家厂商的余额 / 模型接口 | **仅当你手动配置了对应厂商**才会请求 | 同上（用该厂商的 key） | 同上 |
+
+发送的只有**凭据本身**（HTTP 头）—— 不发对话内容、不发账单、不发任何本地数据。
+
+---
+
+## 七、安全设计
+
+- **本地服务只绑 `127.0.0.1`**，端口由系统随机分配。
+- **Host 白名单**：请求的 `Host` 必须是自己的 `127.0.0.1:<port>`，否则 403。
+  这是为了挡 **DNS 重绑定**——恶意网页把自己的域名解析到 127.0.0.1，
+  浏览器就会以为"同源"从而读到余额与账目。伪造 `Host` 一律被拒。
+- **单条路由抛错不会弄挂服务**：统一 try/catch，返回 JSON 错误。
+- **渲染进程无 Node 权限**：`contextIsolation: true`、`nodeIntegration: false`，
+  只通过 `preload.cjs` 暴露 8 个方法。
+- **凭据只出现在 HTTP 请求头里**，不进日志、不回显到界面（界面只显示"有没有配"）。
+
+---
+
+## 八、已知限制
+
+- **「每轮消耗」是合成值，不是真实的一轮。** 桌宠没有 DSH 的会话事件，
+  只能按"今日用量的增量"近似 —— 所以节奏是**按轮询周期**结算（约每分钟一次），
+  而不是每完成一次对话就结算。余额接口本身有缓存，这个节奏改不了。
+- **必须填 API Key** 才能看到余额。没填时挂件仍会显示，但余额位置是「未配置」。
+- 覆盖层只铺**主显示器**。多屏用户如果要把她放到副屏，需要改 `main.cjs` 的 `displayBounds()`。
+- 目前是**文件夹形态**（`npm start` 运行），还没打包成单文件 exe。
+
+---
+
+## 九、验证
+
+### 9.1 端到端自检（`npm run selftest`）
+
+不弹窗口：主进程以 `show: false` 建窗口、不调用 `show`，跑完把结论写到
+`%APPDATA%\大肥鱼桌宠\selftest.txt` 并退出。
+
+> 为什么要写文件：**Electron 在 Windows 上是 GUI 子系统程序，`console.log` 不会回到父进程终端**，
+> 直接看 stdout 是空的（这个坑踩过）。
+
+| 断言 | 结果 |
+|---|---|
+| 鲸鱼脚本已执行 | ✅ |
+| 鲸鱼挂件已初始化（**composer 占位生效**） | ✅ |
+| rice 客户端已执行 | ✅ |
+| 挂件根节点 `.dshwv-root` 已建立 | ✅ |
+| 挂件主体 `.dshwv-body` 已建立 | ✅ |
+| 鲸鱼立绘 `img.dshwv-img` 已建立 | ✅ |
+| 立绘走的是本地 `/dsh-whale/` 路由 | ✅ `/dsh-whale/image.png?v=2` |
+| body 上有挂件节点 | ✅ 22 个 |
+| 命中图已构建（复刻挂件的逐像素判定） | ✅ |
+| **★ 立绘中心判为「可点」**（左键点击的关键） | ✅ |
+| **根节点空白角判为「穿透」** | ✅ |
+| **命中比例合理**（既不是全空、也不是整块矩形） | ✅ 66%（262/400） |
+| 窗口运行中宿主接口仍可用 | ✅ HTTP 200 |
+| **托盘图标可加载（asar 内路径）** | ✅ 256×256 |
+| **打包内文件可读**（settings.html / index.html / shell.js / icon.ico） | ✅ 4 项 |
+| **拖动物理模块已加载** | ✅ |
+| **★ 开关出现在小鲸鱼的 ☰ 菜单里** | ✅ 文案「拖动物理」 |
+| 位置接管类已生效 | ✅ |
+| **★ 接管期间 left/top 没有 transition**（否则逐帧写入会被补间成乱飞） | ✅ 只剩 `transform` |
+| 弹簧 / 重力 / 反弹 / 摩擦 / 慢放阈值 与 dsh-pet **逐项一致** | ✅ 200·30 / 1400·0.78·2.5 / 500 |
+| **纯函数数值校验**：软上限 3 例、弹簧单步、抛掷单步、静止判定 2 例 | ✅ 全部命中理论值 |
+| **★ 与原程序 `pet/physics.py` 数值对拍**（step 1 / 30 / 60 / 静止步 636） | ✅ **逐位一致** |
+| **★ 抛掷能停下来、停在界内**（真跑一次 12.7 秒的抛掷） | ✅ mode 归 null，未飞出去 |
+| **合计** | **46 / 46** |
+
+> **数值对拍**是这块最强的证据：把原程序的 `physics.pyc` 用 Python 3.11 直接 `exec` 起来取基准，
+> 再让 JS 跑同样输入比对 ——
+> `step 1 → (1051.2000, 661.9584)`、`step 30 → (1238.8960, 232.8607)`、
+> `step 60 → (59.9853, 488.9784)`、`静止步 → 第 636 步`，**全部逐位一致**。
+> 这比"看动画像不像"硬得多，也顺带证明了"弹 10 秒是原版行为"。
+
+**两种发布形态都跑过同一份自检 —— 都是 46/46：**
+
+| 形态 | 命令 | 结果 |
+|---|---|---|
+| 免安装目录版 | `PET_SELFTEST=1 dist\win-unpacked\大肥鱼桌宠.exe` | ✅ 46/46 |
+| **便携版单文件** | `PET_SELFTEST=1 大肥鱼桌宠.exe` | ✅ 46/46（含解压，27 秒） |
+
+> 后两条（托盘图标 / 打包内文件）是**专门为打包加的**：asar 是只读归档，
+> `nativeImage.createFromPath` 和 `loadFile` 读 asar 内的路径是经典坑，
+> 而且**开发模式下永远测不出来**（走的是真实文件系统）。
+
+### 9.2 宿主侧自测（`npm run test:host`）
+
+不启动 Electron，`DSH_HOME` 指向临时目录，不碰真实 `~/.dsh`：
+
+| 验证项 | 结果 |
+|---|---|
+| 两份原版 `apply()` 均不抛异常 | ✅ |
+| 路由注册数（鲸鱼 22 + rice 15 + 外壳 3） | ✅ 40 条 |
+| 关键接口全部 200 且有内容（含图片 / 音频 / 脚本 / JSON / 外壳页面） | ✅ 17 项 |
+| **伪造 Host → 403**（含 DNS 重绑定式） | ✅ |
+| 正常 Host → 200 | ✅ |
+| 未知路径 404 且服务不崩 | ✅ |
+| 连打 20 次伪造 Host 后服务仍可用 | ✅ |
+| 数据落在 `DSH_HOME`，不在真实 `~/.dsh` 留痕 | ✅ |
+| 没配 key 时 `balance.json` 干净返回 `NO_KEY`（不会拿错值去请求上游） | ✅ |
+| **rice 全链路**：喂一轮消耗 → 正确换算出该吃几口并累计 | ✅ |
+| **合计** | **63 / 63**（连跑 3 次稳定） |
+
+> 写测试时抓到一条**真实行为**：`randomSteal`（随机偷吃）**默认是开**的，
+> 所以「吃不吃」是掷骰子的 —— 断言必须先把随机关掉才确定。
+> 这条也写进了 `说明.md`，免得用户以为"她怎么有时候不吃"是坏了。
+
+### 9.3 语法检查
+
+`node --check` 通过：`main.cjs`、`lib/*.js`、`renderer/shell.js`、`preload.cjs`、
+`vendor/whale/lib/index.js`、`vendor/rice/lib/index.js`、`vendor/rice/lib/client.js`。
+
+### 9.4 踩过的坑（都已修，记在这儿省下次）
+
+| 坑 | 现象 | 原因 / 解法 |
+|---|---|---|
+| **`NODE_OPTIONS` 干扰** | 启动即报 `Cannot read properties of undefined (reading 'getPath')` | Electron 主进程会继承 `NODE_OPTIONS`；某些工具往里塞的 `--require=xxx.cjs` 会劫持 `require('electron')`，让它解析到 `node_modules/electron` 那个 npm 包装包（导出的是二进制路径字符串）。判据：`require.resolve('electron')` 应返回裸串 `electron`。**`scripts/selftest.mjs` 里已 `delete env.NODE_OPTIONS`** |
+| **Electron 的 ESM 主进程** | 静态 `import { app } from 'electron'` 报 "does not provide an export named 'BrowserWindow'"；动态 `import()` 拿到空壳 | 主进程改用 **CommonJS**（`main.cjs`），这是官方支持路径 |
+| **stdout 拿不到** | 自检跑完了但终端一片空白 | Electron 在 Windows 是 GUI 子系统程序，`console.log` 不回父进程终端 → 自检结果**同时写文件与日志** |
+| **`file://` + 绝对路径** | 挂件的 `/dsh-whale/*` 请求全部落空 | 改成**页面也由本地服务发出**（同源），零 URL 改写 |
+| **★ 穿透判定用错判据 → 左键点她完全没反应** | 能看到她、但点不动也拖不动 | 挂件刻意把 `.dshwv-root` / `.dshwv-body` / `img.dshwv-img` 都设成 `pointer-events:none`（它自己另有一套逐像素命中图），所以 `elementFromPoint` 在立绘中心只返回 **`BODY`** → 判定成"指针不在挂件上" → **穿透永不关闭，事件根本到不了页面**。实测：立绘中心 / 根节点中心 / 根节点左上角，三处全返回 `BODY`。解法：**复刻挂件自己的命中图**（610×610、`object-fit:contain` + 右下对齐、翻转读 `.dshwv-left` 类），与 `elementFromPoint` 取或 |
+| **★ localStorage 每次都是全新的** | 每次重启她都回到右下角、角色和设置全部复位 | 页面端口用 `0`（随机）→ origin 变 → **localStorage 按「协议+主机+端口」隔离**。实测：随机端口跑十几次后，Local Storage 里躺着 **18 个不同 origin**。解法：**端口持久化**到 `<数据目录>/port.txt`，下次先试它，被占用才退回随机 |
+| **★ 逐帧定位被 CSS transition 补间 → 乱飞** | 拖动物理完全失控，她像在追赶+过冲 | `.dshwv-root` 自带 `transition:left .16s,top .16s`。每 16ms 写一次位置，浏览器给每次变化套 160ms 补间，永远追不上。**接管方必须用 `!important` 掐掉它**（只留 `transform`）。详见 §2.3 |
+| **改完 bug 没重新打包** | 用户反馈"完全不对"，而代码里找不到原因 | 修完只改了源码、没重新 `npm run build`，用户测的一直是旧包。**改完必须立刻重建并把新包给用户** |
+| **随机偷吃是默认开的** | 测试断言不稳定 | 先 `POST /dsh-rice/config {randomSteal:false}` 再断言 |
+
+---
+
+## 十、许可
+
+- **代码**：MIT —— 见 [`LICENSE`](LICENSE)（含上游 `Copyright (c) 2026 MeteorNOX`）
+- **素材**：`vendor/whale/assets/` 与 `vendor/rice/assets/` 不在 MIT 覆盖范围，
+  按 as-is 随包提供；逐项来源见 [`PROVENANCE.md`](PROVENANCE.md)
+- **禁止商用**（上游对素材的要求）；二次分发请保留署名文件

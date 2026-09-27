@@ -1,0 +1,69 @@
+{
+  "name": "dafatfish-pet",
+  "productName": "大肥鱼桌宠",
+  "version": "0.3.10-mod",
+  "description": "把小鲸鱼余额挂件（dsh-whale-widget 0.3.10）做成桌面宠物，并合入「偷吃白饭」（dsh-rice-widget 0.3.4）的功能",
+  "private": true,
+  "type": "module",
+  "main": "main.cjs",
+  "scripts": {
+    "start": "electron .",
+    "test:host": "node _test/host-test.mjs",
+    "selftest": "node scripts/selftest.mjs",
+    "build": "electron-builder --win --publish never",
+    "build:dir": "electron-builder --win dir --publish never",
+    "verify:packaged": "node scripts/verify-packaged.mjs"
+  },
+  "author": "Ark",
+  "license": "MIT",
+  "devDependencies": {
+    "electron": "^44.4.3",
+    "electron-builder": "^26.15.3"
+  },
+  "build": {
+    "appId": "cn.ark.dafatfish.pet",
+    "productName": "大肥鱼桌宠",
+    "copyright": "MIT · 上游 MeteorNOX/DeepSeek-Balance-Whale-Widget",
+    "directories": {
+      "output": "dist",
+      "buildResources": "assets"
+    },
+    "files": [
+      "main.cjs",
+      "preload.cjs",
+      "lib/**/*",
+      "renderer/**/*",
+      "vendor/**/*",
+      "assets/**/*",
+      "scripts/**/*",
+      "README.md",
+      "说明.md",
+      "署名与许可.md",
+      "PROVENANCE.md",
+      "LICENSE",
+      "package.json"
+    ],
+    "win": {
+      "icon": "assets/icon.ico",
+      "target": [
+        {
+          "target": "portable",
+          "arch": [
+            "x64"
+          ]
+        }
+      ]
+    },
+    "portable": {
+      "artifactName": "大肥鱼桌宠-${version}-便携版.${ext}",
+      "unicode": true
+    },
+    "compression": "maximum",
+    "extraFiles": [
+      {
+        "from": "vendor/rice/songs",
+        "to": "vendor/rice/songs"
+      }
+    ]
+  }
+}

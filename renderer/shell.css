@@ -1,0 +1,66 @@
+/* 桌面外壳的样式。整页透明，桌面要透出来。 */
+html, body {
+  margin: 0;
+  padding: 0;
+  width: 100%;
+  height: 100%;
+  overflow: hidden;
+  background: transparent;
+}
+
+/* 挂件自己会 position:fixed 定位，这里不干扰它 */
+#root {
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+}
+
+/* 挂件的启动锚点：必须存在于 DOM 中，但完全不可见、不占位、不吃鼠标 */
+#root .composer-placeholder {
+  position: absolute;
+  left: -9999px;
+  top: -9999px;
+  width: 1px;
+  height: 1px;
+  opacity: 0;
+  pointer-events: none;
+}
+
+/* ============================================================================
+   「偷吃白饭」的原生浮动小标签：**必须从第一帧就藏掉**（用户报的"打开桌宠时偶尔
+   弹出偷吃白饭菜单"就是这个）
+   ============================================================================
+   它自己是这么写的（vendor/rice/lib/client.js）：
+       .dshrice-chip{ ... opacity:0; pointer-events:auto; z-index:20; cursor:pointer }
+       .dshrice-chip:hover, .dshwv-body:hover .dshrice-chip{ opacity:.95 }
+   两个要命的点：
+     · 平时只是 **opacity:0**，不是 display:none —— 也就是说它**看不见但能点**；
+     · 鼠标一进她的方块（.dshwv-body:hover）它就变可见，于是看起来"凭空冒出个标签"。
+   而外壳里那条隐藏规则原先写在 rice-entry.js 的 start() 里，那是外壳启动后
+   **4 秒**才跑的定时器（shell.js 的 setTimeout(...,4000)）——
+   这 4 秒里它一直是"看不见但能点"的状态：点上去会把偷吃白饭面板弹出来，
+   用户完全不知道点了什么。所以这条规则挪到外壳自己的样式表里，
+   **从第一帧就生效**，不依赖任何模块的启动时序。
+   （rice-entry.js 里那条保留着，两处都写不冲突；点它仍然是程序化 .click()，
+     display:none 不影响 .click()。） */
+.dshrice-chip {
+  display: none !important;
+}
+
+/* 启动异常时的提示条（正常情况下一直 display:none） */
+#boot-hint {
+  position: fixed;
+  left: 50%;
+  top: 12px;
+  transform: translateX(-50%);
+  font: 13px/1.6 -apple-system, "Microsoft YaHei", system-ui, sans-serif;
+  color: #536ba9;
+  background: rgba(255, 255, 255, .92);
+  border: 1px solid rgba(83, 107, 169, .25);
+  border-radius: 10px;
+  padding: 8px 14px;
+  display: none;
+  pointer-events: none;
+  z-index: 999999;
+  max-width: 70vw;
+}

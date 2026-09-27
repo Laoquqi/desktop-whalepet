@@ -1,0 +1,15 @@
+# 明确标注二进制类型，避免 git 把媒体文件当文本处理（diff / 换行转换都会出问题）
+*.png   binary
+*.jpg   binary
+*.jpeg  binary
+*.gif   binary
+*.ico   binary
+*.webp  binary
+*.mp3   binary
+*.wav   binary
+*.weba  binary
+*.webm  binary
+*.mp4   binary
+*.ttf   binary
+*.woff  binary
+*.woff2 binary
