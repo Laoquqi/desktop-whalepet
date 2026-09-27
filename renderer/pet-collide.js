@@ -227,14 +227,11 @@
     lastContact = next
   }
 
-  // 主进程碰撞世界下发的：冲量（dv）+ 位置分离（dx/dy），20Hz。
-  // ⚠️ 分工要说清楚：
-  //    · **位置分离**（dx/dy）保证"绝不留着重合"—— 和渲染端的 resolveSolid 一起收口
-  //    · **冲量**（dv）负责"街机手感"（恢复系数/摩擦/质量分摊），
-  //      只有物理开关开着才吃（关着时"松手不抛"是用户的明确选择）
-  // 单条冲量/分离消息的**幅度上限**。碰撞世界跑在 50ms 前的旧位置数据上，
-  // 高速相撞（比如生气弹跳砸进同伴）时算出来的量可能大得离谱 ——
-  // 不封顶的表现就是用户报的"乱飞和瞬移"。超限的量靠后续 tick 继续收敛。
+  // 同伴物理步进转发来的**碰撞反弹份额**（对方撞到我时，把我该得的那份
+  // 冲量+位移经主进程转过来）。走 collisionBounce —— 不管物理开关如何，
+  // 碰撞都是真实世界的反馈，双方要**互相往反方向弹开**。
+  // （旧版"第一只撞不动"的特例已按新需求移除：现在对称弹开。）
+  // 单条消息的幅度上限：数值再离谱也不会把桌宠打成火箭/瞬移。
   var MAX_IMPULSE_DV = 1500    // px/s：一次冲量最多改这么多速度
   var MAX_SEPARATE_PX = 48     // px：一次分离最多挪这么多距离
   function clampMag(v, max) {
@@ -251,14 +248,12 @@
     if (p.isDragging && p.isDragging()) return
     var dv = clampMag([d.dvx || 0, d.dvy || 0], MAX_IMPULSE_DV)
     var dp = clampMag([d.dx || 0, d.dy || 0], MAX_SEPARATE_PX)
-    if (window.__dshpetIsExtra === false) {
-      // 第一只"撞不动"（用户要求"保持在右下角"）：别人撞过来时让开的是别人。
-      // 但她自己撞到别人（速度冲量）还是要弹 —— 所以只跳过位置分离。
-      if (p.applyImpulse && (Math.abs(dv[0]) > 0.01 || Math.abs(dv[1]) > 0.01)) {
-        p.applyImpulse(dv[0], dv[1])
-      }
+    if (p.collisionBounce) {
+      p.collisionBounce(dv[0], dv[1], dp[0], dp[1])
+      report()
       return
     }
+    // 旧渲染接口兜底（理论上到不了这里）
     if (p.nudge && (Math.abs(dp[0]) > 0.01 || Math.abs(dp[1]) > 0.01)) p.nudge(dp[0], dp[1])
     if (p.applyImpulse && (Math.abs(dv[0]) > 0.01 || Math.abs(dv[1]) > 0.01)) {
       p.applyImpulse(dv[0], dv[1])

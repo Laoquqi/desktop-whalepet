@@ -229,8 +229,58 @@
     return out
   }
 
-  function isAtRest(py, vx, vy, bottom, bounced, speed) {
-    if (py >= bottom - 1 && Math.abs(vy) < 1 && Math.abs(vx) < REST_VX) return true
+  // —— 桌宠互撞的子步响应 ——
+  // 与撞墙同一条子步管线：无 50ms 旧数据、无异步补丁，接触当帧就解算。
+  // 冲量按二体公式：我只吃自己的质量份额，**对方的份额经主进程转发**给它
+  // （它接到后从 collisionBounce 起跳，走同一条逐渐衰减的抛掷管线）。
+  // 返回 true 表示这一子步发生了碰撞（喂给 isAtRest 的 bounced，停下才平滑）。
+  function peerContactSubstep() {
+    var peers = window.__dshpetPeers
+    if (!peers || !peers.length) return false
+    var a = artOffset()
+    if (!a || !(a.w > 0)) return false
+    var myCircles = circlesFromRect(physPos[0] + a.dx, physPos[1] + a.dy, a.w, a.h)
+    var anyHit = false
+    var now = Date.now()
+    for (var i = 0; i < peers.length; i++) {
+      var p = peers[i]
+      if (!p || p.visible === false || !(p.w > 0) || !(p.h > 0)) continue
+      var peerCircles = circlesFromRect(p.x, p.y, p.w, p.h)
+      var c = deepestChainContact(myCircles, peerCircles)
+      if (!c) continue
+      anyHit = true
+      var invMe = 1, invPeer = 1               // 同尺寸桌宠质量相等
+      var sumInv = invMe + invPeer
+      // 位置分离：只推**自己**的份额（对方的份额由它自己的步进/转发处理）
+      var sep = Math.min(c.overlap * 0.6 + 0.5, 12)
+      physPos[0] -= c.nx * sep * (invMe / sumInv)
+      physPos[1] -= c.ny * sep * (invMe / sumInv)
+      // 冲量：只在**接近**时弹（vRel·n < 0）；低速接触只分开不弹（不然贴着抖）
+      var vrx = (p.vx || 0) - physVel[0], vry = (p.vy || 0) - physVel[1]
+      var vn = vrx * c.nx + vry * c.ny
+      if (vn >= -80) continue                                   // 分离中 / 低速接触
+      if (now - (peerBounceAt[p.id] || 0) < 120) continue       // 同一对的冷却
+      peerBounceAt[p.id] = now
+      var e = 0.82
+      var jn = -(1 + e) * vn / sumInv
+      var myDvx = -jn * c.nx * invMe, myDvy = -jn * c.ny * invMe
+      physVel[0] += myDvx; physVel[1] += myDvy
+      // 对方的份额 → 主进程转发到它的窗口（它从 collisionBounce 接住）
+      try {
+        if (window.petApi && window.petApi.peerImpulse) {
+          window.petApi.peerImpulse({
+            to: p.id,
+            dvx: jn * c.nx * invPeer, dvy: jn * c.ny * invPeer,
+            dx: c.nx * sep * (invPeer / sumInv), dy: c.ny * sep * (invPeer / sumInv),
+          })
+        }
+      } catch (err) {}
+      log('撞上同伴 → 反向弹开（我的 Δv=' + Math.round(myDvx) + ',' + Math.round(myDvy) + '）')
+    }
+    return anyHit
+  }
+
+  function isAtRest(py, vx, vy, bottom, bounced, speed) {    if (py >= bottom - 1 && Math.abs(vy) < 1 && Math.abs(vx) < REST_VX) return true
     return !!(bounced && speed < REST_VY && Math.abs(vy) < 1)
   }
 
@@ -319,6 +369,36 @@
   var SOLID_GAP = 1          // 实体之间保留的缝（像素）。1px 肉眼看不出来，但保证"不重合"
   // 实体推出/分离的每帧限幅：防深重叠（快速度抛掷砸进同伴、生成时重合）一步"瞬移"
   var RESOLVE_MAX_STEP_PX = 64
+
+  // —— 桌宠互撞的**步进内**物理（真实二体反弹）——
+  // 立绘用三圆胶囊链近似（与主进程 lib/collision.js 同一套数学）；
+  // 每只质量相等（主进程 calculateMass 对同尺寸桌宠算出同一个值）。
+  function circlesFromRect(l, t, w, h) {
+    var r = Math.min(w, h) / 2
+    var cx = l + w / 2, cy = t + h / 2
+    if (w >= h) return [[l + r, cy, r], [cx, cy, r], [l + w - r, cy, r]]
+    return [[cx, t + r, r], [cx, cy, r], [cx, t + h - r, r]]
+  }
+  // 链 vs 链的最深接触：返回 { nx, ny, overlap }（n 从我指向对方），没有则 null
+  function deepestChainContact(c1, c2) {
+    var best = null
+    for (var i = 0; i < c1.length; i++) {
+      for (var j = 0; j < c2.length; j++) {
+        var a = c1[i], b = c2[j]
+        var dx = b[0] - a[0], dy = b[1] - a[1]
+        var dist = Math.hypot(dx, dy)
+        if (dist >= a[2] + b[2]) continue
+        var nx, ny
+        if (dist < 1e-6) { nx = 0.6; ny = 0.8 }
+        else { nx = dx / dist; ny = dy / dist }
+        var overlap = a[2] + b[2] - dist
+        if (!best || overlap > best.overlap) best = { nx: nx, ny: ny, overlap: overlap }
+      }
+    }
+    return best
+  }
+  // 生气弹跳/同伴转发用的时间戳（同一对 120ms 内只弹一次，防抽搐）
+  var peerBounceAt = {}
   var lastSolidPos = null    // 上一次**已确认不和任何人重叠**的位置
   var solidBlocked = false   // 这一帧有没有被同伴挡住（给"碰上了"的反馈用）
   function solidPeers() {
@@ -373,6 +453,10 @@
   }
   function resolveSolid(pos) {
     solidBlocked = false
+    // ⚠️ 抛掷/生气弹跳进行中：同伴碰撞由 **tick 的子步管线**负责（无延迟、
+    //    冲量+分离一次解算）。这里若再推一遍，两路会打架 = 抽搐。
+    //    lastSolidPos 置空：落定后重新记"干净帧"，兜底退回才不会退到旧位置。
+    if (mode === 'throw') { lastSolidPos = null; return pos }
     // ⚠️⚠️ **第一只桌宠"撞不动"。**
     //    用户要求："第一个桌宠不能被弹走，保持在右下角"。
     //    别人撞过来时，让开的是**别人**（它的 resolveSolid 会把自己挡开）；
@@ -684,6 +768,7 @@
     mode = null
     dragTarget = null
     throwElapsed = 0
+    lastSolidPos = null                    // 落定后重新记"干净帧"（防兜底退回旧位置瞬移）
     if (timer !== null) { clearInterval(timer); timer = null }
   }
 
@@ -706,6 +791,8 @@
         physPos = [out[0], out[1]]
         physVel = [out[2], out[3]]
         if (out[4]) bounced = true
+        // —— 桌宠互撞：和撞墙**同一条子步管线**，真实二体反弹 ——
+        if (peerContactSubstep()) bounced = true
         if (!isFinite(physPos[0]) || !isFinite(physPos[1]) || !isFinite(physVel[0]) || !isFinite(physVel[1])) {
           log('抛掷步进出现非法值，已停止物理')
           stopPhysics()
@@ -1821,6 +1908,27 @@
       tossGuardUntil = Date.now() + TOSS_GUARD_MS
       startTimer()
       log('生气弹跳：v=(' + Math.round(dvx) + ',' + Math.round(dvy) + ')（与物理开关无关）')
+      return true
+    },
+    // 同伴碰撞的转发份额：从 collisionBounce 接住（位置分离 + 速度冲量）。
+    // ⚠️ 与 toss 一样**不受 enabled 限制** —— 物理碰撞是真实世界的反馈，
+    //    开关只管"自己甩出去要不要飞"，管不了"被撞了会不会弹"。
+    collisionBounce: function (dvx, dvy, dx, dy) {
+      if (!root) return false
+      if (isFinite(dx) && isFinite(dy)) {
+        var m2 = Math.hypot(dx, dy)
+        if (m2 > 48) { dx = dx / m2 * 48; dy = dy / m2 * 48 }
+        if (m2 > 0.01) physPos = clampToBounds([physPos[0] + dx, physPos[1] + dy])
+      }
+      if (isFinite(dvx) && isFinite(dvy) && (Math.abs(dvx) > 0.01 || Math.abs(dvy) > 0.01)) {
+        physVel = [physVel[0] + dvx, physVel[1] + dvy]
+        if (mode !== 'throw' && (Math.abs(physVel[0]) > 1 || Math.abs(physVel[1]) > 1)) {
+          mode = 'throw'
+          throwElapsed = 0
+          startTimer()
+        }
+      }
+      applyOverride()
       return true
     },
     // 给「多桌宠」用：把她整体推开 (dx,dy)。

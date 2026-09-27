@@ -581,9 +581,10 @@ const PEER_MS = 40
 const lastPeerMsg = new WeakMap()
 setInterval(() => {
   const list = pets.filter((w) => !w.isDestroyed())
-  if (list.length < 2) return
   const items = []
   for (const w of list) {
+    // 隐藏中的桌宠（全屏让路 / 托盘隐藏）不参与 —— 看不见的同伴不该挡别人
+    if (!w.isVisible()) continue
     const r = petRects.get(w)
     if (!r || !(r.w > 0) || !(r.h > 0)) continue
     // ⚠️⚠️ **还没落座的（多开出来的新桌宠）不参与碰撞广播。**
@@ -594,23 +595,36 @@ setInterval(() => {
     if (!w.__placed && w !== win) continue
     items.push({ w, r })
   }
-  if (items.length < 2) return
-  for (const me of items) {
+  // ⚠️ 少于两只时**要发空列表**：渲染端好把同伴约束清掉（不然一只被隐藏后，
+  //    另一只的实体约束还盯着它 40ms 前的旧位置，表现为"对着空气绕着走"）。
+  //    内容没变时 sig 去重，不会刷屏。
+  for (const me of list) {
     const peers = []
     for (const o of items) {
-      if (o.w === me.w) continue
+      if (o.w === me) continue
       peers.push({
+        id: o.w.id,                       // 渲染端物理步进的冲量转发要按窗口寻址
         x: Math.round(o.r.x), y: Math.round(o.r.y),
         w: Math.round(o.r.w), h: Math.round(o.r.h),
         dragging: o.r.dragging === true,
+        // 步进内二体冲量要用同伴的**速度和质量**（报告里本来就带速度）
+        vx: o.r.vx || 0, vy: o.r.vy || 0,
+        mass: C_OR_BROADCAST_MASS(o.r),
+        visible: o.w.isVisible(),
       })
     }
     const sig = JSON.stringify(peers)
-    if (lastPeerMsg.get(me.w) === sig) continue
-    lastPeerMsg.set(me.w, sig)
-    try { me.w.webContents.send('pet:peers', peers) } catch (err) {}
+    if (lastPeerMsg.get(me) === sig) continue
+    lastPeerMsg.set(me, sig)
+    try { me.webContents.send('pet:peers', peers) } catch (err) {}
   }
 }, PEER_MS)
+
+// 广播用的质量估算（与碰撞世界同一公式：面积加权 clamp 0.5~2.5）
+function C_OR_BROADCAST_MASS(r) {
+  if (!collisionMod) return 1
+  try { return collisionMod.calculateMass(r.w / 2, r.h / 2) } catch (err) { return 1 }
+}
 
 // ---------------------------------------------------------------------------
 // 拖文件"吃掉"（移植自参考实现的 pet/file_eater.py）
@@ -751,6 +765,8 @@ setInterval(() => {
     if (!r || !(r.w > 0) || !(r.h > 0)) continue
     // 没落座的不参与（见 peers 广播里的说明：它开在默认位置会和第一只重叠）
     if (!w.__placed && w !== win) continue
+    // 隐藏中的桌宠（全屏让路）不参与碰撞 —— 看不见还撞人是怪事
+    if (!w.isVisible()) continue
     const flags = C.FLAG_VISIBLE | C.FLAG_COLLISION_ENABLED |
       (r.dragging ? C.FLAG_DRAGGING : 0) |
       (r.aiming ? C.FLAG_SLINGSHOT_AIMING : 0)
@@ -817,7 +833,14 @@ setInterval(() => {
   }
 
   // ② 冲量：每个成员把参与的所有对的冲量**向量合并**（参考实现同样做法）
+  // ⚠️ **只处理"拖拽挤压"对**（一只被拖着、另一只没被拖）：拖拽的位移在渲染端
+  //    由指针决定，物理步进管不到，只有这条异步通道能推别人。
+  //    其余组合（抛掷 vs 一切）的碰撞响应已**下沉到渲染端物理步进内部**
+  //    （见 renderer/drag-physics.js 的 tick —— 50ms 旧数据 + 异步冲量会有
+  //    抽搐/乱飞/瞬移，步进内响应才是真实物理）。
   for (const pr of pairs) {
+    const dragPair = pr.A.r.dragging !== pr.B.r.dragging
+    if (!dragPair) continue
     const imp = C.solveCollisionImpulse(pr.A.m, pr.B.m, pr.nx, pr.ny)
     const aa = accOf(pr.A.w), ab = accOf(pr.B.w)
     aa.hit = true; ab.hit = true
@@ -825,11 +848,8 @@ setInterval(() => {
     ab.dvx += imp[3]; ab.dvy += imp[4]
   }
 
-  // ③ 位置分离
-  //    · **扫掠对**（这一帧穿过去了、现在没重叠）：做一次即可 —— 它们本来就没嵌入
-  //    · **当前重叠对**：做**最多 4 轮迭代、每轮最深优先**。
-  //      一轮是不够的：三只挤在一起时，把 A 推开会让它压到 C，
-  //      必须重算重叠再推，直到所有对的重叠都 ≤0.5px（参考实现的收敛判据）。
+  // ③ 位置分离 —— 同样**只处理"拖拽挤压"对**（理由同 ②）。其余组合由渲染端
+  //    物理步进内的分离负责（无延迟、无旧数据）。
   const posDelta = new Map()   // win -> [dx, dy]（本 tick 累积的分离位移）
   const deltaOf = (w) => {
     let d = posDelta.get(w)
@@ -839,6 +859,7 @@ setInterval(() => {
   const invOf = (m) => C.isInfiniteMass(m) ? 0 : (m.mass > 0 ? 1 / m.mass : 0)
 
   for (const pr of pairs) {
+    if (pr.A.r.dragging === pr.B.r.dragging) continue   // 非拖拽挤压对 → 渲染端负责
     if (!pr.swept) continue
     const sep = C.calculatePositionSeparation(pr.overlap, pr.nx, pr.ny,
       invOf(pr.A.m), invOf(pr.B.m), false)
@@ -906,6 +927,15 @@ setInterval(() => {
   // 记下这一帧的圆链，下一 tick 做扫掠用
   for (const it of items) prevCircles.set(it.w, it.circles)
 }, WORLD_MS)
+
+// 渲染端物理步进的二体冲量转发：A 撞到 B 时，A 把属于 B 的那份冲量/位移
+// 经这里转给 B 的窗口（事件驱动，无轮询延迟）。
+ipcMain.on('pet:peer-impulse', (e, p) => {
+  if (!p || typeof p.to !== 'number') return
+  const w = BrowserWindow.fromId(p.to)
+  if (!w || w.isDestroyed()) return
+  try { w.webContents.send('pet:impulse', { dvx: p.dvx, dvy: p.dvy, dx: p.dx, dy: p.dy }) } catch (err) {}
+})
 
 // —— 只数变化广播 ——
 // 渲染端只有一只时**完全跳过**碰撞相关的开销（50ms 位置上报 + 60ms 接触检测）——

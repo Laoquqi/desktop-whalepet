@@ -83,6 +83,9 @@ contextBridge.exposeInMainWorld('petApi', {
   onPetCount: (fn) => ipcRenderer.on('pet:count-changed', (e, n) => { try { fn(n) } catch (err) {} }),
   // 主进程碰撞世界下发的冲量 + 位置分离（20Hz）
   onImpulse: (fn) => ipcRenderer.on('pet:impulse', (e, d) => { try { fn(d) } catch (err) {} }),
+  // 桌宠互撞的冲量转发：撞人的那只把自己该给同伴的份额发过来，
+  // 主进程按窗口 id 转交给对方 —— 事件驱动，无轮询延迟。
+  peerImpulse: (p) => ipcRenderer.send('pet:peer-impulse', p),
   // 落好座了 → 主进程可以显示这只窗口了
   notifyPlaced: () => ipcRenderer.send('pet:placed'),
   // 「识别歌曲和作者」：开关走主进程（它要常驻跑 PowerShell 轮询媒体会话）
