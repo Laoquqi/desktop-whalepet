@@ -83,6 +83,12 @@
   var TICK_MS = 16              // dsh-pet 的 _physics_timer.setInterval(16)
   var DT = 0.016
   var CLICK_SQ = 9              // 与挂件一致的"点击 vs 拖动"阈值（3px）
+  // 连点防误甩：松手时**总位移**小于这个值的，哪怕手抖滑得飞快（瞬时速度远超
+  // DEAD_ZONE_SPEED）也一律不进抛掷。用户报"连点她到生气的同时，她像被甩出去一样
+  // 弹来弹去"—— 根因正是连点时手指在按下期间滑了几像素～十几像素，位移虽小、
+  // 时间更短，estimateReleaseVelocity 算出的速度轻易越过死区，于是每次抬起都是一发
+  // 抛掷。真甩出去的拖拽位移远大于这个值（100px 起），不受影响。
+  var CLICK_THROW_GUARD_PX = 24
 
   var STORE_KEY = 'dshpet-drag-physics'      // 开关（本插件自己的键，加前缀）
   var POS_KEY = 'dshw-pos'                   // 位置：沿用挂件的格式，重启能恢复
@@ -1257,6 +1263,17 @@
     }
     // 上限按**当前档位**取（轻柔/标准/强力/疯狂），不再写死
     var strengthCap = throwSpeedCap(getThrowStrength())
+    // 连点防误甩：位移是"点击级"的（连点/手抖，< 24px）就不抛 —— 无论估算速度多大。
+    var dxDrag = e.clientX - d.startX
+    var dyDrag = e.clientY - d.startY
+    if (Math.hypot(dxDrag, dyDrag) < CLICK_THROW_GUARD_PX) {
+      stopPhysics()
+      updateFacing()
+      applyOverride()
+      persistPosition()
+      log('松手位移 ' + Math.round(Math.hypot(dxDrag, dyDrag)) + 'px < 点击阈值，不抛（防连点误甩）')
+      return
+    }
     var rv = estimateReleaseVelocity(trail, nowSec(), strengthCap)
     trail = []
     if (Math.hypot(rv[0], rv[1]) < DEAD_ZONE_SPEED) {
