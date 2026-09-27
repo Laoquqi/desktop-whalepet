@@ -93,6 +93,11 @@
   var STORE_KEY = 'dshpet-drag-physics'      // 开关（本插件自己的键，加前缀）
   var POS_KEY = 'dshw-pos'                   // 位置：沿用挂件的格式，重启能恢复
 
+  // 生气弹跳的保护窗：toss 之后一小段时间内，"点击级的松手"不允许掐灭抛掷 ——
+  // 不然用户生气了还在继续点，每一次抬手（哪怕位移只有几像素）都会把她按在原地。
+  var TOSS_GUARD_MS = 1500
+  var tossGuardUntil = 0
+
   // ------------------------------------------------------------ 纯函数 ----
   // 软上限：cap*(1-e^(-s/cap))。硬钳会把所有快甩压成同一个速度（"甩多快都一样"），
   // 软膝曲线保证任意力度下速度仍单调可区分，同时渐近不超过 cap。
@@ -1242,6 +1247,13 @@
     ignoreWidgetPosUntil = Date.now() + 800
     if (!d.moved) return          // 点击：完全放行，让挂件走它自己的 whaleClick()
 
+    // 生气弹跳进行中：**点击级的松手**不要掐灭它 —— 用户气头上还会继续点，
+    // 手一抖（≥3px 判成拖动）走到下面的分支就是一发 stopPhysics，她刚弹出去
+    // 就被按回原地。真拖拽（位移 ≥ 24px）不受保护，照常接管（把正在飞的
+    // 抓下来是合理操作）。
+    if (mode === 'throw' && Date.now() < tossGuardUntil &&
+        Math.hypot(e.clientX - d.startX, e.clientY - d.startY) < CLICK_THROW_GUARD_PX) return
+
     // 真拖动：拦下挂件的 pointerup（它会把位置算成"光标位移"并做吸附），
     // 然后补发一个 pointercancel 让它自己把拖拽状态清干净。
     try { e.stopImmediatePropagation() } catch (err) {}
@@ -1746,6 +1758,7 @@
       physVel = [dvx, dvy]
       mode = 'throw'
       throwElapsed = 0
+      tossGuardUntil = Date.now() + TOSS_GUARD_MS
       startTimer()
       log('生气弹跳：v=(' + Math.round(dvx) + ',' + Math.round(dvy) + ')（与物理开关无关）')
       return true

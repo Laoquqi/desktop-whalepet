@@ -329,9 +329,9 @@
   //     的 toss 通道（和拖拽松手的抛掷同一条物理管线，所以弹跳手感与"甩走"一致）。
   //     自检模式不弹：她一飞会干扰后续所有与位置/面板相关的断言。
   function angryToss() {
-    if (window.petApi && window.petApi.selftest) return
+    if (window.petApi && window.petApi.selftest) { log('生气弹跳：自检模式跳过'); return }
     var p = window.__dshpetPhysics
-    if (!p || !p.toss) return
+    if (!p || !p.toss) { log('生气弹跳：物理模块还没就绪（刷新前点出来的）→ 本次不弹'); return }
     var speed = 2300 + Math.round(Math.random() * 900)          // 总速率：与真人甩的量级一致
     var dir = Math.random() < 0.5 ? -1 : 1                      // 水平朝向随机
     var vx = dir * Math.round(speed * (0.6 + Math.random() * 0.25))
