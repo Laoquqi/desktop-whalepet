@@ -324,6 +324,21 @@
     if (mood !== 'shy') apply(true)
     scheduleBlink()
   }
+  // 生气 → 把自己甩出去：连点把她惹毛了，她"啪"地一下弹出去，撞边反弹、逐渐停下。
+  // ⚠️ **与拖动物理开关无关**（用户的明确要求：不管开关都要弹）—— 走 drag-physics
+  //     的 toss 通道（和拖拽松手的抛掷同一条物理管线，所以弹跳手感与"甩走"一致）。
+  //     自检模式不弹：她一飞会干扰后续所有与位置/面板相关的断言。
+  function angryToss() {
+    if (window.petApi && window.petApi.selftest) return
+    var p = window.__dshpetPhysics
+    if (!p || !p.toss) return
+    var speed = 2300 + Math.round(Math.random() * 900)          // 总速率：与真人甩的量级一致
+    var dir = Math.random() < 0.5 ? -1 : 1                      // 水平朝向随机
+    var vx = dir * Math.round(speed * (0.6 + Math.random() * 0.25))
+    var vy = -Math.round(speed * (0.4 + Math.random() * 0.25))  // 往上抛，落地才有弹跳
+    try { p.toss(vx, vy) } catch (e) {}
+  }
+
   function onClick(e) {
     if (!cfg.on || disabledReason) return
     if (!hitHer(e.clientX, e.clientY)) return
@@ -341,7 +356,8 @@
     if (clickTimes.length >= need) {
       clickTimes = []
       setMood('angry', 5000)
-      log('连点 ' + need + ' 次 → 生气')
+      angryToss()
+      log('连点 ' + need + ' 次 → 生气（弹出去）')
     }
   }
 

@@ -1736,6 +1736,20 @@
       }
       return true
     },
+    // 「连点生气」用：把她按"被甩出去"抛一次。
+    // ⚠️ 这是表情系统点名的**主动作**（用户要求：生气时不管物理开关都要弹出去），
+    //    不属于"拖拽松手"，所以**不受 enabled 限制** —— 与 applyImpulse（外力，
+    //    关着物理时不吃）语义不同。走的是同一条抛掷物理管线，弹跳手感与甩走一致。
+    toss: function (dvx, dvy) {
+      if (!root) return false
+      if (!isFinite(dvx) || !isFinite(dvy)) return false
+      physVel = [dvx, dvy]
+      mode = 'throw'
+      throwElapsed = 0
+      startTimer()
+      log('生气弹跳：v=(' + Math.round(dvx) + ',' + Math.round(dvy) + ')（与物理开关无关）')
+      return true
+    },
     // 给「多桌宠」用：把她整体推开 (dx,dy)。
     // 走的是和拖拽/抛掷**同一套** physPos + applyOverride，
     // 所以照样过 clampToBounds —— 不会被推出工作区，也不会和兜底夹取打架。

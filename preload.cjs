@@ -3,6 +3,9 @@
 const { contextBridge, ipcRenderer } = require('electron')
 
 contextBridge.exposeInMainWorld('petApi', {
+  // 自检模式标记（PET_SELFTEST=1）：渲染进程靠它跳过"会把桌宠到处乱飞"的动作
+  // （连点生气时的 toss），免得自检里位置/面板类断言被搅乱。
+  selftest: !!process.env.PET_SELFTEST,
   getPort: () => ipcRenderer.invoke('pet:port'),
   getDataDir: () => ipcRenderer.invoke('pet:data-dir'),
   // 鼠标是否穿透由渲染进程按"指针在不在挂件上"决定
