@@ -27,6 +27,10 @@
   var pop = null, textEl = null, titleEl = null, artistEl = null
   var hideTimer = null
   var waitTimer = null
+  // 「没在播」的宽限收起定时器：主进程 1.5s 一推，切歌间隙/暂停时会推 null ——
+  // 收到 null 立刻 hide 的话，气泡就会"被按下去又弹起来"（用户看到的"歌手名字在闪"）。
+  // 所以 null 时**保持现状**，30s 一直没歌才收。
+  var nullHideTimer = null
   // ⚠️ 用户明确要求：**歌名/作者气泡弹出 2 秒后消失**（原来是 7000）。
   //    只影响"没开歌词 / 歌词没拿到"这一种情况 ——
   //    歌词模式（lyState==='ready'）是**常驻**不自动收的；
@@ -394,7 +398,16 @@
     if (api.onNowPlaying) {
       api.onNowPlaying(function (info) {
         if (!enabled()) return
-        if (!info) { hide(); return }
+        if (!info) {
+          // 切歌间隙 / 暂停时的空推送：**保持现状**（歌词气泡继续显示），
+          // 30s 一直没歌才收起。立刻 hide 会让气泡每 1.5 秒闪一次。
+          if (hideTimer) { clearTimeout(hideTimer); hideTimer = null }
+          if (!nullHideTimer) {
+            nullHideTimer = setTimeout(function () { nullHideTimer = null; hide() }, 30000)
+          }
+          return
+        }
+        if (nullHideTimer) { clearTimeout(nullHideTimer); nullHideTimer = null }
         showWhenFree(info, 0)
       })
     }
