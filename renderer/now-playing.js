@@ -27,7 +27,11 @@
   var pop = null, textEl = null, titleEl = null, artistEl = null
   var hideTimer = null
   var waitTimer = null
-  var SHOW_MS = 7000
+  // ⚠️ 用户明确要求：**歌名/作者气泡弹出 2 秒后消失**（原来是 7000）。
+  //    只影响"没开歌词 / 歌词没拿到"这一种情况 ——
+  //    歌词模式（lyState==='ready'）是**常驻**不自动收的；
+  //    歌词还在找（'loading'）时给 15 秒。这两条在 show() 里单独处理，不受这里影响。
+  var SHOW_MS = 2000
 
   // —— 歌词状态 ——
   // 主进程每 1.5 秒推一次"当前播放到第几秒"，但歌词要一句接一句地跟着走，

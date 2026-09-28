@@ -4059,6 +4059,10 @@ async function runSelfTest() {
           ['酷狗暂停、QQ在播 → 取QQ', [mk('KuGou.exe', '酷狗的歌', 'B', 'Paused'), mk('QQMusic.exe', 'QQ的歌', 'A', 'Playing')], 'QQ的歌|A|QQ音乐'],
           ['浏览器/B站不许误认', [mk('SLBrowser', '视频标题', '', 'Playing'), mk('com.bilibili.bilibiliPC', '直播间', '', 'Playing')], null],
           ['没有作者也要能识别', [mk('KuGou.exe', '纯音乐', '', 'Playing')], '纯音乐||酷狗音乐'],
+          ['任意平台也能识别（汽水音乐）', [mk('SodaMusic.exe', '最后的夜', '歌手Y', 'Playing')], '最后的夜|歌手Y|SodaMusic'],
+          ['商店包族名的未知平台也能识别', [mk('Spotify.SpotifyFree_x!App', 'Shape of You', 'Ed', 'Playing')], 'Shape of You|Ed|SpotifyFree_x'],
+          ['已知播放器优先于未知平台', [mk('SodaMusic.exe', '未知平台在播', 'X', 'Playing'), mk('KuGou.exe', '酷狗在播', 'Y', 'Playing')], '酷狗在播|Y|酷狗音乐'],
+          ['已知播放器暂停、未知平台在播 → 取未知平台', [mk('KuGou.exe', '酷狗的歌', 'B', 'Paused'), mk('SodaMusic.exe', '汽水在播', 'Z', 'Playing')], '汽水在播|Z|SodaMusic'],
           ['空列表', [], null],
         ]
         const fails = []
@@ -4068,7 +4072,7 @@ async function runSelfTest() {
           if (got !== want) fails.push({ name, got, want })
         }
         say(fails.length === 0,
-          '★ 识别歌曲：挑歌逻辑 ' + cases.length + ' 条用例全对（酷狗/网易云/QQ音乐、暂停、多开、误认防护）',
+          '★ 识别歌曲：挑歌逻辑 ' + cases.length + ' 条用例全对（任意平台、暂停、多开、误认防护）',
           fails.length ? JSON.stringify(fails) : '全部符合预期')
       }
     } catch (err) {
@@ -4169,9 +4173,9 @@ async function runSelfTest() {
       if (!ly) {
         say(false, '★ 歌词：createLyrics 不可用')
       } else {
-        const r = await ly.fetch('青花瓷', '周杰伦')
-        say(r && r.lines && r.lines.length > 10 && r.source === 'qqmusic',
-          '★ 歌词：真的能从 QQ音乐 取到带时间轴的歌词',
+        const r = await ly.fetch('青花瓷', '周杰伦', 199)   // 199s = 《青花瓷》真实时长，兼测时长闸
+        say(r && r.lines && r.lines.length > 10 && r.source !== 'none',
+          '★ 歌词：能从歌词源（酷狗/QQ/网易云任一）取到带时间轴的歌词',
           'source=' + (r && r.source) + ' 句数=' + (r && r.lines && r.lines.length) +
           ' 匹配=' + (r && r.matched) + ' 首句=' + JSON.stringify(r && r.lines && r.lines[0]))
         const nf = await ly.fetch('这首歌根本不存在zzzqqq', '没人')
@@ -4328,6 +4332,13 @@ async function runSelfTest() {
       await win.webContents.executeJavaScript(`(function(){
         try { localStorage.setItem('dshpet-now-playing','1') } catch(e){}
         if (window.__dshpetNowPlaying) { window.__dshpetNowPlaying.hide(); }
+        // ⚠️ 上一段泡泡测试可能把**挂件自己的泡泡**留在屏幕上 —— np 气泡按
+        //    "不叠泡泡"的设计会等它收起（最长 8s），本用例 900ms 就采样，
+        //    会被它憋住。这里直接把它关掉。
+        try {
+          var wb = document.querySelector('.dshwv-pop')
+          if (wb) wb.classList.remove('dshwv-pop-open')
+        } catch(e){}
         return true
       })()`)
       if (nowPlaying) { try { nowPlaying.setEnabled(true) } catch (e) {} }
