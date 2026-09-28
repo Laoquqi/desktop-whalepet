@@ -37,6 +37,23 @@
       // 按下期间把面板"钉住"：位置由 #dshpet-rice-pin-css 那条动态规则负责
       // （类 + !important，压得住 rice 的行内 left），这里只需要废掉位移。
       '.dshrice-menu.dshpet-presspin{transform:none !important}',
+
+      // —— 翻倒的碗，动画播完必须淡出 ——
+      // ⚠️⚠️ 上游漏了这一步：`dshrice-gone`（淡出）只在"碗被炸到头上"
+      //    （dshrice-up）那条路径上加，走"**倒扣在旁边地面**"这条路径时没人加，
+      //    于是碗永远留在她左下方 —— 用户看到的就是
+      //    「桌宠左下角两条多余的红色线」（那是碗里的 egg-1/egg-2.png，橙色）。
+      //    实测过：命中像素 rgb(245,95,37)，位置 x 31~37% / y 88~97%，
+      //    而 .dshrice-bowl 基础 left:70% 加上末帧 translate(-102%) 正好落在这里。
+      //
+      //    620ms = SPILL_MS（vendor/rice/lib/client.js:36）。
+      //    `:not(.dshrice-up)` 是为了**不干扰"被炸到头顶"那条路径** —— 它有
+      //    自己的 gone 逻辑，加了会重复淡出。
+      //    只补"淡出"，不碰动画本身：翻碗这个动作的观感完全保留。
+      '@keyframes dshpet-rice-bowl-out{from{opacity:1}to{opacity:0}}',
+      '.dshrice-bowl.dshrice-spill:not(.dshrice-up){' +
+        'animation:dshrice-spill .62s linear forwards,' +
+        'dshpet-rice-bowl-out .35s ease .62s forwards}',
     ].join('')
     document.head.appendChild(st)
   }

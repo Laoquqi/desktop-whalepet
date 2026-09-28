@@ -89,14 +89,27 @@ while ($true) {
       # Needed so the renderer can show the right lyric line ("one line after
       # another" in sync with the music). -1 means "unknown".
       # GetTimelineProperties() is synchronous, so no Await here.
-      $pos = -1.0; $dur = -1.0
+      #
+   # pos is a SNAPSHOT taken at LastUpdatedTime, not "now". Polling alone
+      #    can never be accurate: whatever we sample is already up to one poll
+      #    interval old by the time the renderer sees it, and the lyric clock
+      #    then has to guess in between. That is why lyrics kept drifting.
+      #    So we ALSO emit `posAt` (epoch ms of LastUpdatedTime) and the
+      #    playback rate -- the renderer can then extrapolate the exact live
+      #    position:
+      #        livePos = pos + (nowMs - posAt) / 1000 * rate
+      #    which is accurate to tens of milliseconds instead of hundreds.
+      $pos = -1.0; $dur = -1.0; $posAt = -1.0; $rate = 1.0
       try {
         $tl = $s.GetTimelineProperties()
         if ($tl) {
           $pos = [double]$tl.Position.TotalSeconds
           $dur = [double]$tl.EndTime.TotalSeconds
+          try { $posAt = [double]$tl.LastUpdatedTime.ToUnixTimeMilliseconds() } catch {}
         }
       } catch {}
+      try { $rate = [double]$s.GetPlaybackInfo().PlaybackRate } catch {}
+      if (-not ($rate -gt 0)) { $rate = 1.0 }
       [void]$list.Add([pscustomobject]@{
         app    = [string]$s.SourceAppUserModelId
         title  = $title
@@ -104,6 +117,8 @@ while ($true) {
         album  = $album
         status = $status
         pos    = $pos
+        posAt  = $posAt
+        rate   = $rate
         dur    = $dur
       })
     }
@@ -112,5 +127,10 @@ while ($true) {
   } catch {
     Emit @{ ok = $false; reason = [string]$_.Exception.Message }
   }
-  Start-Sleep -Milliseconds 1500
+  # 500ms (was 1500ms). `pos` is the value AT SAMPLE TIME, so the sparser the
+  # sampling, the further the lyrics drift behind the player -- at 1500ms they
+  # were consistently about half a beat late. GSMTC queries are cheap, so 3x
+  # the frequency has no noticeable cost.
+  # ASCII-ONLY on purpose: see the note at the top of this file.
+  Start-Sleep -Milliseconds 500
 }

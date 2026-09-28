@@ -48,6 +48,9 @@
   var lyTick = null
   var lyCurText = ''
   var lastInfo = null
+  var lastPos = -1        // 上一拍拿到的播放进度（判断"pos 有没有在走"）
+  var lastLyLogAt = 0     // 歌词同步诊断日志的限流时间戳
+  var lastPlaying = null  // 上一拍的播放状态（判断"刚恢复播放"）
 
   function log(m) { try { if (api.log) api.log('[识别歌曲] ' + m) } catch (e) {} }
   function enabled() { try { return localStorage.getItem(KEY) === '1' } catch (e) { return false } }
@@ -277,20 +280,130 @@
   function show(info) {
     if (!info || !info.title) return false
     if (!build()) return false
-    lastInfo = info
+    // ⚠️⚠️ **别在这里就覆盖 lastInfo。**
+    //    下面要用它判断"是不是同一首歌"，先覆盖的话 sameSong 永远为 true，
+    //    "换歌要重新锚定"这条就永远不会触发。赋值挪到函数末尾。
 
     // —— 同步歌词状态 ——
+    // ⚠️⚠️ **这里不能无条件重新锚定。**
+    //    主进程开着歌词时**每 1.5 秒推一次**，而播放器不一定上报播放进度：
+    //      · 不上报 → pos = -1
+    //      · 报了但恒定 → pos 一直是同一个值
+    //    旧代码每次都 `lyBasePos = info.pos; lyBaseAt = now`，
+    //    于是前者永远停在 LRC 第一行（头几行是「作词/作曲」），
+    //    后者每 1.5 秒跳回第一行 —— 表现就是**卡在作词作曲 + 闪烁**。
+    //    正确做法：**pos 真在推进才用它对齐**；否则保留锚点，
+    //    让本地时钟继续跑（一句一句往下走，比冻住强）。
+    const prev = lastInfo                     // 上一拍的 info（还没被覆盖）
+    const sameSong = !!(prev && prev.title === info.title &&
+      String(prev.artist || '') === String(info.artist || ''))
     lyLines = Array.isArray(info.lyrics) ? info.lyrics : []
     lyState = info.lyricsState || 'none'
-    lyBasePos = (typeof info.pos === 'number' && info.pos >= 0) ? info.pos : -1
-    lyBaseAt = performance.now()
-    lyCurText = ''
+
+    // —— 和播放器进度对齐 ——
+    // ⚠️⚠️ **不能每次推送都硬锚定。**
+    //    主进程的 pos 是每 1.5 秒**采样**一次再推过来的，天然滞后 0~1.5 秒。
+    //    每次都 `lyBasePos = info.pos` 就等于每 1.5 秒把时钟**往回拽**一次 →
+    //    锯齿 → 用户看到的正是"歌词对不上播放器进度"。
+    //
+    //    所以分三种情况：
+    //      · 换歌          → 硬对齐（必须）
+    //      · pos 确实在走  → 只追**偏差**的一部分（软对齐，不倒退）
+    //      · pos 不走/-1   → 完全不动，让本地时钟继续跑
+    // —— 把"采样快照"换算成"此刻的真实播放位置" ——
+    // ⚠️⚠️ **这是能不能准的关键。**
+    //    info.pos 是 posAt 那一刻的快照（500ms 才采一次），直接拿它对齐最多差一整个
+    //    采样间隔；两次采样之间用"本地时钟猜"又必然漂。有了 posAt 就能精确外推：
+    //        livePos = pos + (现在 - posAt)/1000 * rate
+    //    精度几十毫秒 —— 于是每次推送都可以放心**硬对齐**。
+    //    暂停时**不外推**（位置本来就该冻住）；老脚本没有 posAt 时退回采样值。
+    let livePos = -1
+    if (typeof info.pos === 'number' && info.pos >= 0) {
+      if (typeof info.posAt === 'number' && info.posAt > 0) {
+        const ageMs = Date.now() - info.posAt
+        const canExtrapolate = (info.playing !== false) && ageMs >= 0 && ageMs < 5000
+        livePos = info.pos + (canExtrapolate ? ageMs / 1000 * (Number(info.rate) || 1) : 0)
+      } else {
+        livePos = info.pos
+      }
+    }
+    const posOk = livePos >= 0
+    const posAdvanced = posOk && lastPos >= 0 && livePos > lastPos + 0.05
+    // —— 快进 / 快退（拖进度条、点进度条、切段落）——
+    // ⚠️⚠️ **必须用"绝对差"判断，不能用"是否变大"。**
+    //    采样间隔 500ms，正常播放两拍之间 pos 只涨 ~0.5s，
+    //    所以 |Δ| > 2s 就是**跳变**（快进或快退）。
+    //    只用 `pos > lastPos` 的话：**快退时 pos 是变小的**，
+    //    posAdvanced 判不成立 → 会一路落到最后的"什么都不做" →
+    //    本地时钟继续往前跑 → 歌词**留在后面不动**（这正是快退时的表现）。
+    const posJumped = posOk && lastPos >= 0 && Math.abs(livePos - lastPos) > 2
+    if (posOk) lastPos = livePos
+    // **恢复播放**（上一拍暂停，这一拍在放）→ 必须硬对齐：
+    // 暂停期间时钟停了，而播放器可能已经跳到别处（拖了进度条/切了段），
+    // 一恢复就得重新对上，否则会一直差着。
+    const resumed = (info.playing !== false) && lastPlaying === false
+    // 换歌 / 恢复播放 / 快进快退 → 一律硬对齐（这三种情况本地时钟都不可信）
+    // 有精确外推时：**每次推送都硬对齐**（livePos 就是此刻的真实位置）。
+    // 没有 posAt 的老脚本才退回"软对齐"那套。
+    const havePosAt = (typeof info.posAt === 'number' && info.posAt > 0)
+    if (posOk && (havePosAt || resumed || !sameSong || posJumped)) {
+      lyBasePos = livePos
+      lyBaseAt = performance.now()
+    } else if (posAdvanced) {
+      const shown = lyBasePos + (performance.now() - lyBaseAt) / 1000
+      const err = livePos - shown
+      if (Math.abs(err) > 1.2) {
+        // 真的跑偏了 → 硬对齐
+        lyBasePos = livePos
+      } else {
+        // 小偏差 → 只追一半：既不倒退、也没有锯齿。
+        // （采样间隔已从 1500ms 降到 500ms，追 50% 能在 1 秒内收敛，
+        //   又不会因为单次抖动就跳。）
+        lyBasePos = shown + err * 0.5
+      }
+      lyBaseAt = performance.now()
+    } else if (lyBasePos < 0) {
+      // pos 不可用（-1）或一直没锚过 → 从 0 起用本地时钟
+      lyBasePos = 0
+      lyBaseAt = performance.now()
+    }
+    // 否则（pos 恒定没在走）：什么都不做，本地时钟继续跑
+
+    // —— 限流诊断（每 ~10 秒一条）——
+    // 实机"歌词对不上进度"时，这条日志能直接回答关键问题：
+    //   pos 到底有没有在走？显示时间跟它差多少？
+    //   走的是"硬对齐 / 软对齐 / 本地时钟"哪一条？
+    // 只看日志就能定位，不用再猜。
+    if (lyricsEnabled() && lyState === 'ready' && lyLines.length) {
+      var nowMs = performance.now()
+      if (nowMs - lastLyLogAt > 10000) {
+        lastLyLogAt = nowMs
+        var shownNow = lyBasePos >= 0 ? (lyBasePos + (nowMs - lyBaseAt) / 1000) : -1
+        var mode = !posOk ? '本地时钟(pos无效)'
+          : havePosAt ? '外推硬对齐'
+          : posJumped ? '硬对齐(快进快退)'
+          : posAdvanced ? (Math.abs(livePos - shownNow) > 1.2 ? '硬对齐' : '软对齐')
+          : '本地时钟(pos没在走)'
+        try {
+          if (api.log) api.log('[歌词同步] 采样=' + (posOk ? info.pos.toFixed(1) : '-1') +
+            ' 外推=' + (livePos >= 0 ? livePos.toFixed(2) : '-') +
+            ' 显示=' + (shownNow >= 0 ? shownNow.toFixed(2) : '-') +
+            ' 差=' + (livePos >= 0 && shownNow >= 0 ? (shownNow - livePos).toFixed(2) : '-') +
+            's 方式=' + mode + ' 当前句=' + JSON.stringify(String(lyCurText || '').slice(0, 12)))
+        } catch (e) {}
+      }
+    }
+    // 同一首歌的例行更新：**不要**清空 lyCurText，
+    // 否则 renderLyricLine 会以为"行变了"而重放淡入 → 每 1.5 秒闪一下
+    if (!sameSong) lyCurText = ''
 
     applyMode()
 
     if (lyricsEnabled() && lyState === 'ready' && lyLines.length) {
       titleEl.textContent = info.title + ' · ' + (info.artist || '未知歌手')
-      renderLyricLine(true)
+      // ⚠️ 传 false（不是 true）：行没变就不重放淡入动画。
+      //    上面刚把 lyCurText 处理好了 —— 换了歌它是空的，所以第一次照样会渲染。
+      renderLyricLine(false)
     } else {
       titleEl.textContent = String(info.title || '')
       // 用户要求"作者名字要换行" —— 所以作者**始终**单独一行。
@@ -319,6 +432,8 @@
       var waitLyrics = lyricsEnabled() && lyState === 'loading'
       hideTimer = setTimeout(hide, waitLyrics ? 15000 : SHOW_MS)
     }
+    lastInfo = info        // ← 放在末尾：下一拍拿它判断"是不是同一首歌"
+    lastPlaying = info.playing !== false
     return true
   }
 
@@ -408,6 +523,21 @@
           return
         }
         if (nullHideTimer) { clearTimeout(nullHideTimer); nullHideTimer = null }
+        // ⚠️ **暂停 → 立刻收起气泡。**
+        //    主进程现在会把"暂停中的那首"也推过来（带 playing:false），
+        //    所以这里能区分"暂停"和"切歌间隙"：
+        //      · 暂停 → 立刻 hide()，并让歌词时钟停下（hide 会清 lyTick）
+        //      · 切歌间隙（info 为 null）→ 还是保持现状，避免闪
+        //    用户要求："暂停播放的同时显示歌词的气泡要同步消失"。
+        if (info.playing === false) {
+          if (hideTimer) { clearTimeout(hideTimer); hideTimer = null }
+          // ⚠️ **必须在这里就把 lastPlaying 置 false。**
+          //    暂停时下面直接 return 了，走不到 show() 末尾那句赋值 ——
+          //    不置的话"恢复播放"永远判不出来，恢复后就不会硬对齐。
+          lastPlaying = false
+          hide()
+          return
+        }
         showWhenFree(info, 0)
       })
     }
