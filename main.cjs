@@ -350,6 +350,12 @@ function makePetWindow(port, primary) {
   })
 
   w.setAlwaysOnTop(true, 'screen-saver')
+  // ⚠️ **不可激活窗口**：点击桌宠不抢焦点。看视频/直播时点她，视频窗口
+  //    不会失焦 —— 部分播放器失焦会暂停直播、页面闪白，要点一下视频才恢复
+  //    （用户实测）。鼠标事件与焦点无关，照常收（命中测试基于窗口层级）。
+  //    代价：桌宠自己收不到键盘事件（弹弓的 ESC 取消失效，其余取消路径
+  //    —— 松右键/失焦 —— 不受影响；弹弓蓄力本身是鼠标操作）。
+  try { w.setFocusable(false) } catch (err) {}
   try { w.setVisibleOnAllWorkspaces(true, { visibleOnFullScreen: true }) } catch (err) {}
   // ⚠️ Windows 会把普通窗口的尺寸钳到"工作区"（任务栏那一条不算）——
   //    构造时传整屏 bounds 也没用，实测窗口只有 2048×1104 而屏幕是 2048×1152，
@@ -4055,7 +4061,7 @@ async function runSelfTest() {
           ['网易云在播', [mk('cloudmusic.exe', '晴天', '周杰伦', 'Playing')], '晴天|周杰伦|网易云音乐'],
           ['QQ音乐在播', [mk('QQMusic.exe', '稻香', '周杰伦', 'Playing')], '稻香|周杰伦|QQ音乐'],
           ['商店版包族名也能认', [mk('KugouMusic.KugouMusic_x!App', '告白气球', '周杰伦', 'Playing')], '告白气球|周杰伦|酷狗音乐'],
-          ['暂停的不弹', [mk('KuGou.exe', '夜曲', '周杰伦', 'Paused')], null],
+          ['暂停的也返回（渲染端据此收起气泡、停时钟）', [mk('KuGou.exe', '夜曲', '周杰伦', 'Paused')], '夜曲|周杰伦|酷狗音乐'],
           ['两个都在播 → 取酷狗', [mk('QQMusic.exe', 'QQ的歌', 'A', 'Playing'), mk('KuGou.exe', '酷狗的歌', 'B', 'Playing')], '酷狗的歌|B|酷狗音乐'],
           ['酷狗暂停、QQ在播 → 取QQ', [mk('KuGou.exe', '酷狗的歌', 'B', 'Paused'), mk('QQMusic.exe', 'QQ的歌', 'A', 'Playing')], 'QQ的歌|A|QQ音乐'],
           ['浏览器/B站不许误认', [mk('SLBrowser', '视频标题', '', 'Playing'), mk('com.bilibili.bilibiliPC', '直播间', '', 'Playing')], null],
