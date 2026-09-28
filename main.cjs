@@ -34,10 +34,11 @@ const { app, BrowserWindow, ipcMain, Tray, Menu, screen, nativeImage, shell, dia
 app.commandLine.appendSwitch('enable-features', 'NetworkServiceInProcess')
 app.commandLine.appendSwitch('disable-features', 'AudioServiceOutOfProcess')
 app.commandLine.appendSwitch('disk-cache-size', String(32 * 1024 * 1024))
-// ④ 关闭硬件加速：省掉整个 GPU 合成进程（私有内存 373→272MB，双开实测）。
-//    桌宠是"大面积静止 + 局部小动画"的页面，软件合成的空闲 CPU 实测 ≈0%
-//    （损伤跟踪只重绘挂件那一小块）；透明度/画面经真实桌面截屏对比无差异。
-app.disableHardwareAcceleration()
+// ⚠️ **不要关硬件加速**（试过，已撤销）：软件渲染下全屏透明窗口每次重绘
+//    （开菜单、动画）都会把视频正在用的硬件叠加层（MPO）挤掉 ——
+//    用户实测"全屏视频时开桌宠菜单 → 视频页面变黑，要点一下才恢复"。
+//    内存优化的其余手段（网络/音频服务并入、磁盘缓存、affinity 共享
+//    渲染进程）都保留，只损失了 GPU 进程那一份。
 
 const path = require('node:path')
 const fs = require('node:fs')
