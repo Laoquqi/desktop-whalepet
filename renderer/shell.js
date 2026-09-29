@@ -134,6 +134,7 @@
   }
 
   var lastInteractive = null
+  var waitMoveLog = false     // 诊断：让路恢复后等第一个 mousemove（见 onReevalInteractive）
   var lastX = -1
   var lastY = -1
   var forced = false          // 托盘强制穿透
@@ -177,19 +178,80 @@
   function update(e) {
     lastX = e.clientX
     lastY = e.clientY
+    if (waitMoveLog) {                      // 诊断：让路恢复后的第一个鼠标移动
+      waitMoveLog = false
+      log('让路恢复后收到第一个 mousemove (' + lastX + ',' + lastY + ') → 事件通道正常')
+    }
     if (window.__dshpetDragging) return          // 拖动中：跳过，别和拖动抢布局
     if (updateScheduled) return                  // 合并到下一帧，多个事件只算一次
     updateScheduled = true
-    requestAnimationFrame(function () {
+    // ⚠️⚠️ **这里绝对不能用 requestAnimationFrame。**
+    //    原来写的是 rAF(...)，而**被节流的渲染进程不跑 rAF 回调** ——
+    //    全屏让路时主进程会 setBackgroundThrottling(true)，
+    //    恢复后即使关掉节流，rAF 回调也可能一直不被调度。
+    //    后果：鼠标事件明明到了（handler 跑了），但真正决定穿透状态的
+    //    setInteractive() **永远不执行** → 窗口永远停在"穿透" →
+    //    表现就是用户说的"一点反应都没有"（连桌宠菜单都点不了）。
+    //    改用 setTimeout(0)：定时器即使被节流也只是延迟，不会像 rAF 那样彻底不跑。
+    setTimeout(function () {
       updateScheduled = false
       setInteractive(evaluate(lastX, lastY))
-    })
+    }, 0)
   }
 
   window.addEventListener('mousemove', update, true)
   // 指针离开窗口 → 恢复穿透
   window.addEventListener('mouseleave', function () { setInteractive(false) })
   window.addEventListener('blur', function () { setInteractive(false) })
+
+  // ⚠️⚠️ **主进程要求"重新评估穿透"时必须真的重新下发。**
+  //    背景（用户报"全屏视频进出后点不了"）：
+  //      主进程和渲染端各有一个状态缓存，都是"值没变就跳过"：
+  //        main.cjs:  if (interactiveOf.get(w) === on) return
+  //        这里:      if (on === lastInteractive) return
+  //      而窗口 hide()/showInactive() 之后，Electron 那边**实际**的穿透状态
+  //      可能已经复位，两个缓存却还认为"没变" → 谁都不重新下发 →
+  //      窗口永远停在"点一下直接穿到桌面"= 点不了。
+  //    所以收到主进程的信号后：**清掉本地缓存**，再用最后已知坐标强制重算一次。
+  //    （下面那个 1 秒兜底复核也依赖 lastX/lastY，不够确定 —— 这条是确定性的。）
+  if (api.onReevalInteractive) {
+    api.onReevalInteractive(function () {
+      // ⚠️⚠️ **只清缓存，绝对不要用旧坐标重算。**
+      //    lastX/lastY 是**全屏前**鼠标的位置 —— 那时鼠标在视频上（视频全屏了），
+      //    拿它 evaluate() 必然得出"穿透"，于是刚被主进程接管回来的窗口
+      //    又被打回穿透 —— 死锁原样保留（日志实测：
+      //    「重新评估鼠标穿透 → 穿透」，紧接着用户就点不动了）。
+      //
+      //    主进程那边已经把窗口强制设成"接管"了，这里只要**让下一次真实的
+      //    mousemove 能重新下发**就够了 —— 清掉本地缓存即可。
+      //    用户把鼠标移到她身上时会触发 mousemove，那时 evaluate 用的是
+      //    **真实指针位置**，判定才准。
+      lastInteractive = null
+      // —— 诊断：等下一次鼠标移动，看事件到底有没有到窗口 ——
+      // "点不了"查了四轮。这条日志是**决定性**的：
+      //   有 → 事件到了，问题在判定逻辑
+      //   没有 → 事件根本没到窗口（窗口不可见 / 位置离谱 / 被系统挡住）
+      waitMoveLog = true
+      log('已清穿透缓存（等下一次鼠标移动重新判定，不用旧坐标硬算）')
+    })
+  }
+
+  // 全屏让路：主进程会在 260ms 后 hide 窗口，这里先把画面淡出。
+  // ⚠️ 必须在 hide **之前** 跑完 —— 窗口一隐藏，渲染就停了，动画不会再推进。
+  //    淡出结束后立刻把 opacity 复位（窗口已经不可见了，复位不会被看到），
+  //    这样下次恢复显示时不会残留一个透明的画面。
+  if (api.onFadeOut) {
+    api.onFadeOut(function () {
+      try {
+        var el = document.documentElement
+        el.style.transition = 'opacity .22s ease'
+        el.style.opacity = '0'
+        setTimeout(function () {
+          try { el.style.opacity = '1' } catch (e) {}
+        }, 400)
+      } catch (e) {}
+    })
+  }
 
   // 兜底：面板开合、她被拖动之后，指针没动但状态该变 —— 每 1 秒用最后坐标复核一次
   setInterval(function () {

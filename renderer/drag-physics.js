@@ -303,6 +303,8 @@
   var root = null
   var drag = null            // { startX, startY, origLeft, origTop, moved, w, h }
   var trail = []             // [t, x, y]
+  // 上一次发给主进程的窗口位置（节流用：没变就不发 IPC）
+  var lastSentX = null, lastSentY = null
   var physPos = [0, 0]
   var physVel = [0, 0]
   var mode = null            // null | 'drag' | 'throw'
@@ -344,6 +346,18 @@
       // 只保留"掐掉 left/top 过渡"这一条 —— 位置本身由行内 !important 负责，
       // 不在这里写 left/top，避免多一层样式来源。
       '.dshwv-root.dshpet-phys{transition:transform .3s ease !important}',
+      // ⚠️⚠️ **小窗架构：根的 left/top 必须彻底失效（钉死在窗口右下）。**
+      //    挂件自己会写行内 left/top —— 它是按**工作区**算的，比窗口内的
+      //    钉住位正好差一个任务栏高度（实测 477 vs 525，差 48px）。
+      //    写进去之后 styleObs 再撤掉 —— **每来一轮就是一次可见位移**，
+      //    用户看到的就是"打开时瞬移几下"（日志里
+      //    「挂件把根写到了(525px,477px) → 撤掉行内值」反复出现）。
+      //
+      //    这里直接用 !important 让那个行内值**根本不生效**：
+      //    样式表里的 !important 声明**优先级高于没有 !important 的行内声明**。
+      //    于是挂件照写它的，视觉上纹丝不动，styleObs 也就不用撤了 ——
+      //    从"反复打架"变成"根本打不起来"。
+      //    基础样式 right:0;bottom:0 会把根钉在窗口右下，正是我们要的位置。
       '.dshpet-phys-row{display:flex;align-items:center;gap:6px;margin:5px 0;color:#203170;font-size:12px;white-space:nowrap}',
       '.dshpet-phys-row input{width:16px;height:16px;accent-color:#203170;cursor:pointer;flex:0 0 auto}',
       '.dshpet-phys-hint{color:#9fb0d9;font-size:11px}',
@@ -522,16 +536,15 @@
 
   function applyOverride() {
     if (!root) return
-    // 防御：NaN / Infinity 写进 CSS 会让整条声明失效，她会瞬间跳回挂件记的位置。
+    // 防御：NaN / Infinity 会让窗口被扔丢。
     if (!isFinite(physPos[0]) || !isFinite(physPos[1])) {
       log('位置出现非法值，已忽略该帧：' + physPos[0] + ',' + physPos[1])
       return
     }
     root.classList.add('dshpet-phys')
     // ⚠️ **写之前无条件再夹一次。** 这是"她跑到任务栏下面"的最后一道闸：
-    //    physPos 可能来自好几条路（拖拽 / 抛掷 / 采纳挂件的值 / 启动时的摆放），
-    //    任何一条路上出现异常值（比如立绘还没量到尺寸、bounds 退化成整块工作区），
-    //    都会让她越界。夹在这里，就**无论从哪条路来都越不过去**。
+    //    physPos 可能来自好几条路（拖拽 / 抛掷 / 启动时的摆放），
+    //    任何一条路上出现异常值，都会让她越界。夹在这里，就**无论从哪条路来都越不过去**。
     var cb = clampToBounds(physPos)
     physPos = [cb[0], cb[1]]
     // ⚠️ 再夹一次"不许和同伴重合"。夹完可能又被推出工作区（比如被同伴顶到边上），
@@ -543,23 +556,34 @@
       if (Math.abs(physPos[0] - before[0]) < 0.01 && Math.abs(physPos[1] - before[1]) < 0.01) break
     }
     physPos = resolveSolid(physPos)
-    // 行内 !important：范围最小（只动 left/top），优先级最高（压得住挂件的 express）
-    root.style.setProperty('left', Math.round(physPos[0]) + 'px', 'important')
-    root.style.setProperty('top', Math.round(physPos[1]) + 'px', 'important')
+    // ⚠️⚠️ **小窗口架构：位置 = 窗口的位置。** 根元素在窗口内**钉死不动**
+    //    （挂件基础样式 right:0;bottom:0 —— 它的 state 与真实位置从此永远一致，
+    //     旧架构的"挂件过期 express 瞬移"这一类 bug 在结构上不存在了）。
+    //    物理位置的变化 → 移动**窗口**（IPC → 主进程 setBounds）。
+    //    节流：四舍五入后没变就不发（空闲时零 IPC）。
+    var mx = Math.round(physPos[0]), my = Math.round(physPos[1])
+    if (mx === lastSentX && my === lastSentY) return
+    lastSentX = mx; lastSentY = my
+    try {
+      if (window.petApi && window.petApi.moveWindow) {
+        window.petApi.moveWindow({ x: mx, y: my })
+      }
+    } catch (e) {}
   }
   function releaseOverride() {
     if (!root) return
     root.classList.remove('dshpet-phys')
-    root.style.removeProperty('left')
-    root.style.removeProperty('top')
+    // ⚠️ 这里**不能** removeProperty —— 小窗架构下根必须一直钉在窗口右下。
+    //    撤掉之后挂件会立刻写 left:0（它把归零当"回基础位"），
+    //    根就闪到窗口左上，再被 clampRendered 拉回来 = 一次可见瞬移。
+    //    所以改成"重新钉一遍"。
+    restorePinnedRoot()
   }
 
-  // 读她现在在哪（首次接管时用；之后由 physPos 说了算）
+  // 读她现在在哪（首次接管时用）：小窗口架构下 = **窗口**在屏幕上的位置
   function syncFromDom() {
     if (!root) return false
-    var r = root.getBoundingClientRect()
-    if (!r || !r.width) return false
-    physPos = [r.left, r.top]
+    physPos = [window.screenX, window.screenY]
     return true
   }
 
@@ -574,11 +598,16 @@
       //    多开的那些位置由主进程每次挑空位落座（见 spawnPet / pickSpawnSpot），
       //    本来就不需要持久化。
       if (window.__dshpetIsExtra === true) return
-      var r = root.getBoundingClientRect()
-      if (!r || !r.width) return
-      var vw = window.innerWidth, vh = window.innerHeight
-      var leftDist = r.left, rightDist = Math.max(0, vw - (r.left + r.width))
-      var topDist = r.top, bottomDist = Math.max(0, vh - (r.top + r.height))
+      var a = artOffset()
+      if (!a.w) return
+      // 立绘的**屏幕**矩形 = 窗口位置 + 立绘相对窗口原点的偏移
+      var rootW = root ? root.offsetWidth : 375
+      var rootH = root ? root.offsetHeight : rootW
+      var artL = physPos[0] + (window.innerWidth - rootW) + a.dx
+      var artT = physPos[1] + (window.innerHeight - rootH) + a.dy
+      var sc = screenSize()
+      var leftDist = artL - sc.x, rightDist = Math.max(0, (sc.x + sc.w) - (artL + a.w))
+      var topDist = artT - sc.y, bottomDist = Math.max(0, (sc.y + sc.h) - (artT + a.h))
       var hAnchor = leftDist <= rightDist ? 'left' : 'right'
       var vAnchor = topDist <= bottomDist ? 'top' : 'bottom'
       localStorage.setItem(POS_KEY, JSON.stringify({
@@ -736,24 +765,29 @@
   function bounds() {
     var a = artOffset()
     var sc = screenSize()
-    // 立绘还没量到尺寸时的兜底：**按盒子算**（盒子底边 == 立绘底边，因为立绘贴盒子右下）。
+    // ⚠️ 小窗口架构：physPos 是**窗口**在屏幕上的位置；立绘在窗口内钉死
+    //    （挂件基础样式 right:0;bottom:0 = 立绘贴窗口右下）。所以夹取的
+    //    偏移量 = 立绘相对**窗口原点**的偏移 = (窗口宽 - 根宽) + a.dx。
+    var rootW = root ? root.offsetWidth : 375
+    var rootH = root ? root.offsetHeight : rootW
+    var offX = (window.innerWidth - rootW) + a.dx
+    var offY = (window.innerHeight - rootH) + a.dy
+    // 立绘还没量到尺寸时的兜底：**按窗口算**（立绘贴窗口右下）。
     // ⚠️ 这里**不能直接返回整块工作区** —— 那等于"不夹取"，
-    //    她的盒子能跑到 1104，而立绘在盒子右下角，视觉上就冲到 1104+152 去了
-    //    （用户报的"第一次拖动依旧能拖到任务栏下面"，就是这么来的）。
+    //    她的窗口能跑到工作区外面去（用户报的"第一次拖动依旧能拖到任务栏下面"）。
     if (!a.w) {
-      var r = root ? root.getBoundingClientRect() : null
-      var bw = (r && r.width) || 0
-      var bh = (r && r.height) || 0
       return {
-        left: sc.x, top: sc.y,
-        right: sc.x + sc.w - bw, bottom: sc.y + sc.h - bh,
+        left: sc.x - (window.innerWidth - rootW),
+        top: sc.y - (window.innerHeight - rootH),
+        right: sc.x + sc.w - window.innerWidth,
+        bottom: sc.y + sc.h - window.innerHeight,
       }
     }
     return {
-      left: sc.x - a.dx,                        // 立绘左边缘贴工作区左
-      top: sc.y - a.dy,                         // 立绘上边缘贴工作区顶（盒子会是负值，正常）
-      right: sc.x + sc.w - a.w - a.dx,          // 立绘右边缘贴工作区右
-      bottom: sc.y + sc.h - a.h - a.dy,         // 立绘下边缘贴**任务栏上沿**
+      left: sc.x - offX,                        // 立绘左边缘贴工作区左
+      top: sc.y - offY,                         // 立绘上边缘贴工作区顶（窗口会出工作区，正常）
+      right: sc.x + sc.w - offX - a.w,          // 立绘右边缘贴工作区右
+      bottom: sc.y + sc.h - offY - a.h,         // 立绘下边缘贴**任务栏上沿**
     }
   }
 
@@ -829,8 +863,11 @@
       var img = document.querySelector('img.dshwv-img')
       var r = (img || root).getBoundingClientRect()
       if (!r || !r.width) return
-      var centerX = r.left + r.width / 2
-      var wantLeft = centerX < window.innerWidth / 2
+      // ⚠️ 小窗口架构：朝向按**屏幕**中线判（窗口中线没有意义 —— 她在窗口里
+      //    的位置是固定的，永远偏一侧）。
+      var sc = screenSize()
+      var centerX = window.screenX + r.left + r.width / 2
+      var wantLeft = centerX < sc.x + sc.w / 2
       if (wantLeft === root.classList.contains('dshwv-left')) return
       root.classList.toggle('dshwv-left', wantLeft)
       // ⚠️ 翻转会改变"立绘相对盒子的真实偏移"（152 ↔ 0），所以：
@@ -853,12 +890,16 @@
       // 用**工作区**（不含任务栏）—— 不然吸附会把她的底边贴到任务栏下面去
       var sc = screenSize()
       var vw = sc.w, vh = sc.h, ox = sc.x, oy = sc.y
-      var artLeft = physPos[0] + a.dx
-      var artTop = physPos[1] + a.dy
+      // ⚠️ 小窗口架构：physPos 是窗口的屏幕位置；立绘的屏幕位置要加上
+      //    "根在窗口内"的偏移（根钉在窗口右下：right:0;bottom:0）。
+      var rootW = root ? root.offsetWidth : 375
+      var rootH = root ? root.offsetHeight : rootW
+      var artLeft = physPos[0] + (window.innerWidth - rootW) + a.dx
+      var artTop = physPos[1] + (window.innerHeight - rootH) + a.dy
       var zoneL = vw * 0.10, zoneR = vw * 0.10, zoneB = vh * 0.15
-      if (artLeft <= ox + zoneL) physPos[0] = ox - a.dx
-      else if ((ox + vw) - (artLeft + a.w) <= zoneR) physPos[0] = ox + vw - a.w - a.dx
-      if ((oy + vh) - (artTop + a.h) <= zoneB) physPos[1] = oy + vh - a.h - a.dy
+      if (artLeft <= ox + zoneL) physPos[0] = ox - (window.innerWidth - rootW) - a.dx
+      else if ((ox + vw) - (artLeft + a.w) <= zoneR) physPos[0] = ox + vw - a.w - (window.innerWidth - rootW) - a.dx
+      if ((oy + vh) - (artTop + a.h) <= zoneB) physPos[1] = oy + vh - a.h - (window.innerHeight - rootH) - a.dy
     } catch (e) {}
   }
 
@@ -885,20 +926,9 @@
     // 朝向也要定期重新应用：挂件会按它**过期的** state.flip 把 dshwv-left 改回去。
     // 不补这一步，她拖到左半边也不会转身。
     updateFacing()
-    if (root.style.getPropertyPriority('left') === 'important') return   // 还是我们写的
-    if (Date.now() < ignoreWidgetPosUntil) { applyOverride(); return }   // 刚拖完，它的值是旧的
-    // ⚠️ 挂件的过期 express 刚被 styleObs 改回去 → 冷却窗内**不采纳**：
-    //    不然采纳逻辑会把刚改回去的过期值又变成真值（实测瞬移 147~391px 的元凶）。
-    if (widgetWriteCooldown()) { applyOverride(); return }
-    var l = parseFloat(root.style.left)
-    var t = parseFloat(root.style.top)
-    if (!isFinite(l) || !isFinite(t)) { applyOverride(); return }
-    // ⚠️ **采纳也要夹取。** 挂件的基础样式是 right:0/bottom:0（相对窗口），
-    //    而窗口是整屏高度 —— 它自己 express() 一次就会把她放到任务栏下面。
-    //    不夹的话，"采纳"就等于"把越界位置合法化"。
-    physPos = clampToBounds([l, t])
-    applyOverride()
-    log('采纳挂件的位置 ' + Math.round(physPos[0]) + ',' + Math.round(physPos[1]))
+    // ⚠️ 小窗口架构：挂件的窗口内写入**位置上无害**（它的 state 恒等于钉住位，
+    //    偏差 ≤3px 来自它自己的微拖拽）—— 旧的"采纳/改回"机器整体退役。
+    //    只保留朝向同步（上面）这一件真正需要的事。
   }
 
   function startTimer() {
@@ -1275,14 +1305,21 @@
 
     // ⚠️ 不拦 pointerdown：点击弹气泡、按压音效都挂在挂件那一条链上。
     //    这里只记录起点，真正的接管发生在 pointermove / pointerup。
-    var r = root.getBoundingClientRect()
-    if (!r || !r.width) return
+    // ⚠️⚠️ **拖拽全程用屏幕坐标**（e.screenX/screenY）：小窗口架构下窗口会
+    //    跟着拖拽移动，clientX 相对窗口 —— 窗口一动 client 坐标就"冻结"，
+    //    拖拽会自己追自己停下来。屏幕坐标不随窗口移动，是唯一的真值。
     drag = {
-      startX: e.clientX, startY: e.clientY,
-      origLeft: r.left, origTop: r.top,
-      w: r.width, h: r.height, moved: false,
+      startX: e.screenX, startY: e.screenY,
+      // ⚠️⚠️ **按下时把窗口位置固定住，整个拖拽过程都用它。**
+      //    从全屏版迁移的关键：全屏版存 origLeft/origTop（按下后不再变），
+      //    抓取点 = startX - origLeft 是个常量。
+      //    小窗版原来写 `grabX = drag.startX - physPos[0]`，而 physPos
+      //    **每帧都在变**（窗口跟着拖拽移动）→ grabX 每帧变 → 目标再变，
+      //    正反馈"窗口追自己" → 表现就是"一拖就乱跑"。
+      origLeft: physPos[0], origTop: physPos[1],
+      w: root.offsetWidth || 375, h: root.offsetHeight || 375, moved: false,
     }
-    trail = [[nowSec(), e.clientX, e.clientY]]
+    trail = [[nowSec(), e.screenX, e.screenY]]
     startDragFlush()
   }
 
@@ -1334,8 +1371,10 @@
     //    原因：Electron 的 setIgnoreMouseEvents(true, {forward:true}) 转发过来的指针事件
     //    **不带按键状态**（buttons 恒为 0）。于是拖拽一开始就被自己取消 ——
     //    表现是"开了拖动物理之后完全没反应"。指针丢失改用 pointercancel / blur 兜底。
-    var dx = e.clientX - drag.startX
-    var dy = e.clientY - drag.startY
+    // ⚠️⚠️ **拖拽增量用屏幕坐标**：窗口跟着拖拽移动，client 坐标相对窗口
+    //    —— 窗口一动 client 就冻结（拖拽自己追自己）。屏幕坐标是真值。
+    var dx = e.screenX - drag.startX
+    var dy = e.screenY - drag.startY
     if (dx * dx + dy * dy >= CLICK_SQ) drag.moved = true
     if (!drag.moved) return
 
@@ -1343,15 +1382,15 @@
     try { e.stopImmediatePropagation() } catch (err) {}
 
     var now = nowSec()
-    trail.push([now, e.clientX, e.clientY])
+    trail.push([now, e.screenX, e.screenY])
     var cutoff = now - TRAIL_KEEP_SEC
     while (trail.length && trail[0][0] < cutoff) trail.shift()
 
-    // 抓取点：按下时指针在她身上的相对位置，拖动时保持这个相对关系
+    // 抓取点：按下时指针相对**窗口左上角**的偏移（屏幕坐标差），拖动时保持
     var grabX = drag.startX - drag.origLeft
     var grabY = drag.startY - drag.origTop
     // 夹取：不让**立绘**跑出屏幕（挂件自己按盒子夹，会让立绘够不到屏幕顶/左）
-    dragTarget = clampToBounds([e.clientX - grabX, e.clientY - grabY])
+    dragTarget = clampToBounds([e.screenX - grabX, e.screenY - grabY])
 
     // ⚠️ **拖动一律 1:1 跟手，两种模式完全一致。**
     //    这里以前在"物理开启"时走弹簧跟随，结果是：弹簧会过冲 → 拖到边角时被夹取
@@ -1393,7 +1432,7 @@
     // 就被按回原地。真拖拽（位移 ≥ 24px）不受保护，照常接管（把正在飞的
     // 抓下来是合理操作）。
     if (mode === 'throw' && Date.now() < tossGuardUntil &&
-        Math.hypot(e.clientX - d.startX, e.clientY - d.startY) < CLICK_THROW_GUARD_PX) return
+        Math.hypot(e.screenX - d.startX, e.screenY - d.startY) < CLICK_THROW_GUARD_PX) return
 
     // 真拖动：拦下挂件的 pointerup（它会把位置算成"光标位移"并做吸附），
     // 然后补发一个 pointercancel 让它自己把拖拽状态清干净。
@@ -1417,8 +1456,8 @@
     // 上限按**当前档位**取（轻柔/标准/强力/疯狂），不再写死
     var strengthCap = throwSpeedCap(getThrowStrength())
     // 连点防误甩：位移是"点击级"的（连点/手抖，< 24px）就不抛 —— 无论估算速度多大。
-    var dxDrag = e.clientX - d.startX
-    var dyDrag = e.clientY - d.startY
+    var dxDrag = e.screenX - d.startX
+    var dyDrag = e.screenY - d.startY
     if (Math.hypot(dxDrag, dyDrag) < CLICK_THROW_GUARD_PX) {
       stopPhysics()
       updateFacing()
@@ -1604,31 +1643,51 @@
   // 所以这里加一道**与"谁在拖"无关**的兜底：直接量**渲染出来的真实位置**，
   // 越界就夹回来。它每 100ms 跑一次，代价是一次 getBoundingClientRect；
   // 位置本来就在界内时**一个字都不写**，所以不会和正常拖动打架。
+  // ⚠️ 小窗口架构：根元素在窗口内**钉死**在右下（right:0;bottom:0 基础位），
+  //    "渲染位置越界"这个概念只对**窗口**成立，而窗口的夹取在 applyOverride/
+  //    主进程限幅里已经做了。这里只剩一道安全网：挂件把根写疯了（left/top
+  //    偏离钉住位）就撤掉行内值，让它回到基础位（right:0;bottom:0）。
   function clampRendered() {
     if (!root) return
     var r
     try { r = root.getBoundingClientRect() } catch (e) { return }
     if (!r || !r.width) return
-    var b = bounds()
-    // 和 clampToBounds 同一套口径（右/下界可能小于左/上界时取上界，避免反转）
-    var maxX = Math.max(b.left, b.right)
-    var maxY = Math.max(b.top, b.bottom)
-    var cx = Math.min(Math.max(r.left, b.left), maxX)
-    var cy = Math.min(Math.max(r.top, b.top), maxY)
-    // 1px 容差：正好贴边时别来回微调（那会看出抖）
-    if (Math.abs(cx - r.left) <= 1 && Math.abs(cy - r.top) <= 1) return
-    // ⚠️ 冷却窗内渲染位置 ≠ physPos 时，那是挂件刚写过的过期值 —— 夹取采纳它
-    //    等于把过期值变成真值（瞬移）。改回 physPos 才是对的。
-    if (widgetWriteCooldown() && (Math.abs(cx - physPos[0]) > 2 || Math.abs(cy - physPos[1]) > 2)) {
-      applyOverride()
-      return
-    }
-    physPos = [cx, cy]
-    // 拖动中我们的 physPos 就是真值来源，写回它即可；没在拖时同样成立
-    applyOverride()
-    log('位置越界(' + Math.round(r.left) + ',' + Math.round(r.top) + ') → 已夹回工作区(' +
-      Math.round(cx) + ',' + Math.round(cy) + ')')
+    var pinL = window.innerWidth - root.offsetWidth
+    var pinT = window.innerHeight - root.offsetHeight
+    if (Math.abs(r.left - pinL) <= 1 && Math.abs(r.top - pinT) <= 1) return
+    // 拖动/抛掷中 physPos 是真值来源 —— 它经 moveWindow 驱动窗口，
+    // 根在窗口内永远不动；这里偏离只可能是挂件写疯了。
+    if (drag || mode) { log('拖动/抛掷中根位置被写偏，已还原'); restorePinnedRoot(); return }
+    restorePinnedRoot()
+    log('根位置被写偏(' + Math.round(r.left) + ',' + Math.round(r.top) + ') → 已还原到钉住位')
   }
+    function restorePinnedRoot() {
+      if (!root) return
+      // ⚠️⚠️ **不能只 removeProperty —— 必须带 !important 主动写死。**
+      //
+      //    挂件会**主动写 `root.style.left = '0'; root.style.top = '0'`**
+      //    （它把"归零"当作"回到基础位"）：
+      //      · 全屏架构下基础位 = 整屏左上 → left:0/top:0 是**对的**；
+      //      · 小窗架构下基础位 = **窗口右下**（right:0;bottom:0）→
+      //        left:0 会把它甩到**窗口左上**，也就是 (0,0)。
+      //
+      //    只 removeProperty 的话：撤掉 → 基础位生效(525,525) → 挂件马上又写 0
+      //    → clampRendered 100ms 后再拉回来 → **两个写入者无限打架**，
+      //    表现就是用户报的"打开时瞬移几下"（日志里这两句交替刷屏：
+      //    「挂件把根写到了(525px,477px) → 撤掉行内值」/
+      //      「根位置被写偏(0,0) → 已还原到钉住位」）。
+      //
+      //    带 !important 写死就压得住了：挂件写的是**普通**行内赋值，
+      //    而**行内 !important** 是整条优先级链里最高的。
+      //    （这也解释了为什么之前那条样式表 `.dshwv-root{left:auto !important}`
+      //      没用 —— 它压不住**行内**赋值；必须写成行内 !important。）
+      try {
+        root.style.setProperty('left', 'auto', 'important')
+        root.style.setProperty('top', 'auto', 'important')
+        root.style.setProperty('right', '0', 'important')
+        root.style.setProperty('bottom', '0', 'important')
+      } catch (e) {}
+    }
 
   function start() {
     root = document.querySelector('.dshwv-root')
@@ -1639,13 +1698,76 @@
     //    盒子左上方多出约 152px 空区 —— 按盒子夹会让立绘永远够不到屏幕顶部/左侧
     //    （用户报的"上面有一整块地方拖不上去"）。接管之后改按**立绘**夹取，死区消失。
     if (!syncFromDom()) return false
-    // 兜底：启动时把她摆到桌面右下角（**立绘**的右下角贴住屏幕右下角）。
-    // shell.js 已经在加载挂件**之前**清掉了 dshw-pos，正常情况下挂件本来就落在右下角；
-    // 这里再按"立绘对齐"算一次 —— 因为挂件是按**盒子**对齐的，和我们的夹取口径差 152px。
-    var b0 = bounds()
-    physPos = [b0.right, b0.bottom]
+    // ⚠️⚠️ **开机先把根钉死。** 挂件初始化时会主动写 `left:0;top:0`
+    //    （它把归零当"回基础位"，全屏架构下那是对的、小窗架构下是错的），
+    //    不先钉住的话，用户会在启动瞬间看到根闪到窗口左上再被拉回来 ——
+    //    这正是"打开时瞬移几下"的第一下。带 !important 写死就压得住了。
+    restorePinnedRoot()
+      // 兜底：启动时把她摆到桌面右下角（**立绘**的右下角贴住屏幕右下角）。
+      // shell.js 已经在加载挂件**之前**清掉了 dshw-pos，正常情况下挂件本来就落在右下角；
+      // 这里再按"立绘对齐"算一次 —— 因为挂件是按**盒子**对齐的，和我们的夹取口径差 152px。
+      //
+      // ⚠️⚠️ **这里直接用"窗口右下角 = 工作区右下角"，不要再走 bounds()。**
+      //    bounds().right/bottom 算的是"**立绘**右/下边缘对齐工作区"——
+      //    它要把 offX/offY/a.w/a.h 都减掉，中间任何一项有零点几像素的误差
+      //    （artOffset 的尺寸来自布局，可能是小数）都会累积出来，
+      //    实测启动位置会偏 3px（自检早就报过：pos=[1145,201] 期望 [1148,204]）。
+      //    而小窗架构下**立绘本来就钉在窗口右下角**（挂件基础样式 right:0;bottom:0），
+      //    所以"窗口右下角贴住工作区右下角"和"立绘右下角贴住工作区右下角"
+      //    **是同一件事** —— 直接这么算既精确又少一层换算。
+      // ⚠️⚠️ **启动落位必须用 `documentElement.clientWidth`，不能用 `window.innerWidth`。**
+      //
+      //    实测数据（用户日志）：
+      //        window.innerWidth  = 903      ← 把边框/滚动条区域也算进去了
+      //        getBounds().width  = 901      ← 窗口外框
+      //        真正的内容区        = 900
+      //    启动落位要减掉窗口尺寸：2048-903=1145（错），2048-900=1148（对）
+      //    —— 正好偏 3px，就是用户看到的"向左上偏"。
+      //
+      //    `document.documentElement.clientWidth` 返回的正是**内容区**（不含边框），
+      //    在这里就是 900 —— 一次到位，也不需要任何 IPC
+      //    （之前两轮试过 invoke / 推送，都因为时序问题没落地）。
+      var winW = document.documentElement.clientWidth || window.innerWidth
+      var winH = document.documentElement.clientHeight || window.innerHeight
+      var sc0 = screenSize()
+      physPos = [
+        sc0.x + sc0.w - winW,
+        sc0.y + sc0.h - winH,
+      ]
+      // ⚠️ 这里**不再需要任何 IPC 修正** —— 上面改用 clientWidth/clientHeight
+      //    之后，启动落位本身就是准的。
+      //    （之前两轮试过 invoke 和"主进程推"，都因为时序问题没落地：
+      //      渲染端注册监听要等挂件就绪，比 did-finish-load 晚几百毫秒到几秒。
+      //      换成一个本地属性就直接绕开了整个时序问题。）
+      try {
+        log('启动落位: physPos=[' + physPos[0] + ',' + physPos[1] + ']' +
+          ' 窗口内容区=' + winW + 'x' + winH +
+          '（innerWidth=' + window.innerWidth + ' —— 含边框，不能用来算落位）' +
+          ' avail=' + sc0.w + 'x' + sc0.h + '@(' + sc0.x + ',' + sc0.y + ')')
+      } catch (e) {}
     applyOverride()
     persistPosition()        // 首次接管也把当前位置落盘
+    // ⚠️⚠️ **主动告诉主进程"我就绪了"，让它把窗口摆到工作区右下角。**
+    //    为什么由渲染端开口：主进程"推"的时机没法保证 ——
+    //    这个模块的 start() 要等挂件就绪，比 did-finish-load 晚几百毫秒到几秒，
+    //    之前用 invoke 和定时推送都栽在这上面。渲染端先开口就没有时序问题。
+    //    主进程用 workArea + getBounds 精确计算，比渲染端自己量窗口尺寸可靠
+    //    （渲染端能读到的 innerWidth=903 / clientWidth=900 / 真实外框=901 三个值都不一样）。
+    try {
+      if (api.onPosSynced) {
+        api.onPosSynced(function (p) {
+          try {
+            if (!p || typeof p.x !== 'number' || typeof p.y !== 'number') return
+            physPos = [p.x, p.y]
+            // 清掉"上次发过的位置"，否则 applyOverride 会以为没变而不下发
+            lastSentX = null; lastSentY = null
+            applyOverride()
+            log('已同步主进程摆好的位置: physPos=[' + physPos[0] + ',' + physPos[1] + ']')
+          } catch (e) {}
+        })
+      }
+      if (api.rendererReady) api.rendererReady()
+    } catch (e) {}
     // 注册顺序很重要：必须是 document + capture，且早于挂件
     document.addEventListener('pointerdown', onPointerDown, true)
     // ⚠️ **右键的兜底通道。** 有些 Electron 版本经 setIgnoreMouseEvents 转发过来的
@@ -1712,13 +1834,24 @@
         if (!root) return
         var curL = root.style.getPropertyValue('left')
         var curT = root.style.getPropertyValue('top')
-        var wantL = Math.round(physPos[0]) + 'px'
-        var wantT = Math.round(physPos[1]) + 'px'
-        if (curL === wantL && curT === wantT) return   // 就是我们要的值，别自己喂自己
-        // 留一条日志：万一还有"她瞬移"的情况，日志里能直接看到是挂件写的、我们改回来了
-        lastWidgetStyleWriteAt = Date.now()   // 触发 300ms 采纳冷却（见 lastWidgetStyleWriteAt 的说明）
-        log('挂件改了位置(' + curL + ',' + curT + ') → 已改回(' + wantL + ',' + wantT + ')')
-        applyOverride()
+        // ⚠️⚠️ 小窗架构：根在窗口内钉死在基础位（right:0;bottom:0），
+        //    而 restorePinnedRoot() 是**带 !important 主动写死**的
+        //    （left/top:auto + right/bottom:0）—— 那才是我们要的状态，直接放行。
+        //    不然这里会把我们刚写死的 !important 值撤掉，挂件再写 left:0，
+        //    clampRendered 再拉回来 —— 三个写入者打架，就是用户看到的瞬移。
+        var curPrio = root.style.getPropertyPriority('left')
+        if (curL === 'auto' && curPrio === 'important') return
+        var pinL = (window.innerWidth - root.offsetWidth) + 'px'
+        var pinT = (window.innerHeight - root.offsetHeight) + 'px'
+        var sane = !curL || (Math.abs(parseFloat(curL) - parseFloat(pinL)) <= 2 &&
+                             Math.abs(parseFloat(curT) - parseFloat(pinT)) <= 2)
+        if (sane) return
+        lastWidgetStyleWriteAt = Date.now()
+        log('挂件把根写到了(' + curL + ',' + curT + ') → 恢复钉住位')
+        // ⚠️ 用 restorePinnedRoot()，**不是** removeProperty ——
+        //    挂件写的是 left:0/top:0（普通行内），removeProperty 之后它马上又写，
+        //    两边无限打架。带 !important 写死才压得住。
+        restorePinnedRoot()
       })
       styleObs.observe(root, { attributes: true, attributeFilter: ['style'] })
     } catch (err) {}
@@ -1838,7 +1971,13 @@
       if (!isFinite(cx) || !isFinite(cy)) return false
       var a = artOffset()
       if (!a || !a.w || !a.h) return false
-      physPos = clampToBounds([cx - a.w / 2 - a.dx, cy - a.h / 2 - a.dy])
+      // ⚠️ 小窗口架构：cx/cy 是立绘中心的**屏幕**坐标；窗口左上角 = 立绘中心
+      //    减去"立绘中心相对窗口原点"的偏移（根钉在窗口右下）。
+      var rootW = root.offsetWidth || 375
+      var rootH = root.offsetHeight || rootW
+      var offX = (window.innerWidth - rootW) + a.dx + a.w / 2
+      var offY = (window.innerHeight - rootH) + a.dy + a.h / 2
+      physPos = clampToBounds([cx - offX, cy - offY])
       applyOverride()
       return true
     },
@@ -1966,7 +2105,19 @@
                     base: SLINGSHOT_BASE_SPEED, deform: SLINGSHOT_MAX_DEFORMATION },
     },
     // 给自检用：立绘偏移与可达范围（用来验证"立绘能贴到屏幕四边"）
-    _artOffset: function () { return artOffset() },
+    // ⚠️ 小窗口架构：返回**相对窗口原点**的立绘偏移（ dx = 根在窗口内的
+    //    偏移 + 立绘在根内的偏移）—— 这样 "physPos + dx/dy" 就是立绘的
+    //    **屏幕**位置，与 bounds() 同一口径（自检断言全按这个口径算）。
+    _artOffset: function () {
+      var a = artOffset()
+      var rootW = root ? root.offsetWidth : 375
+      var rootH = root ? root.offsetHeight : rootW
+      return {
+        dx: (window.innerWidth - rootW) + a.dx,
+        dy: (window.innerHeight - rootH) + a.dy,
+        w: a.w, h: a.h,
+      }
+    },
     _bounds: function () { return bounds() },
     _clamp: function (x, y) { return clampToBounds([x, y]) },
     // 给自检用：手动跑一次兜底夹取，并回报有没有真的夹到

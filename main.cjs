@@ -152,6 +152,11 @@ let interactive = false
 let fsWatch = null
 let fsWatchModRef = null                       // 模块引用：托盘里现开时要能创建实例
 let fsYieldEnabled = true                      // 默认开（用户要的行为就是默认发生）
+// ⚠️ true = 桌宠窗口可激活（普通窗口）。默认 false = 不可激活（点她不抢焦点，
+//    避免看视频时点桌宠把播放器弄暂停/闪白）。
+//    托盘里有个开关可以现场切换 —— 专门用来排查"点不了"：
+//    如果切过去就能点了，说明 WS_EX_NOACTIVATE 是元凶。
+let petFocusable = false
 let fsYieldActive = false                      // 当前正处于"全屏 → 已藏"状态
 const PREFS_FILE = () => path.join(DATA_DIR, 'pet-prefs.json')
 function loadFsYieldPref() {
@@ -171,13 +176,132 @@ function setPetsYieldForFullscreen(hidden) {
       if (w.isDestroyed()) continue
       if (hidden) {
         w.__fsWasVisible = w.isVisible()
-        if (w.isVisible()) w.hide()
-        // 藏着的时候定时器没必要全速跑：打开节流（恢复时关掉）
-        try { w.webContents.setBackgroundThrottling(true) } catch (err) {}
+        if (w.isVisible()) {
+          // ⚠️⚠️⚠️ **让路不再用 hide()，改成"移出屏幕 + 透明度 0"。**
+          //
+          //    查了八轮才定位到：窗口建的时候调过 setFocusable(false)
+          //    （为了修"点桌宠抢焦点导致视频/直播暂停"），它在 Windows 上给窗口
+          //    加了 WS_EX_NOACTIVATE。而**这类窗口在 hide() 再 show() 之后，
+          //    鼠标命中测试会失效** —— mousemove 照样能到，但点击送不进窗口，
+          //    表现就是"桌宠和桌宠菜单都点不了，一点反应都没有"。
+          //
+          //    重新断言窗口标志（上一版的做法）只是**治标**：只要还走
+          //    hide/show，就可能再次踩到同一个系统行为。所以这一版直接
+          //    **不走 hide/show** —— 把窗口挪到屏幕外 + 整窗透明，
+          //    视觉上等于消失了（让路的目的达到），但窗口状态**从没被打断过**，
+          //    自然也就不会有"醒来之后点不了"的问题。
+          //
+          //    顺序：先淡出（渲染端做动画），再挪走 + 透明。
+          //    260ms ≈ 渲染端那条 0.22s transition + 余量。
+          try { w.webContents.send('pet:fade-out') } catch (err) {}
+          w.__fsYielded = true                    // 让路中：pet:move-window 要忽略
+          setTimeout(() => {
+            try {
+              if (w.isDestroyed() || !w.__fsYielded) return
+              // ⚠️⚠️ **只做透明，绝对不要把窗口挪出屏幕。**
+              //    上一版把它挪到工作区左边外侧，结果用户看到"退出全屏时桌宠会翻转一下"：
+              //    渲染端的 updateFacing 是按**屏幕中线**判朝向的（小窗架构下窗口中线
+              //    没有意义），窗口一被挪到左半边，它就判定"她在左半边"→ 翻转；
+              //    挪回来又翻回去 —— 一次进出全屏翻两次。
+              //    让路只需要"看不见"，setOpacity(0) 就够了，不需要动位置。
+              w.setOpacity(0)
+            } catch (err) {}
+          }, 260)
+        }
+        // ⚠️⚠️ **不要在这里 setBackgroundThrottling(true)。**
+        //    被节流的渲染进程**不跑 requestAnimationFrame 回调**，
+        //    而渲染端的穿透判定原来正好是用 rAF 做的 —— 恢复后 rAF 可能一直
+        //    不被调度。隐藏窗口本来就会被系统降频，这个节流省不了多少，去掉。
       } else if (w.__fsWasVisible) {
         try { w.webContents.setBackgroundThrottling(false) } catch (err) {}
-        w.showInactive()                       // 不抢焦点：视频刚退出全屏，别把前台抢过来
+        // ⚠️ **恢复：只还原透明度**（这一版没走过 hide，也没挪过位置，
+        //    所以既不需要 showInactive，也不需要 setBounds）。
+        w.__fsYielded = false
+        try { w.setOpacity(1) } catch (err) {}
+        // 再把建窗时设过的标志断言一遍（保险：万一系统在挪动过程中动了样式）
+        try { w.setFocusable(petFocusable) } catch (err) {}
+        try { w.setIgnoreMouseEvents(false) } catch (err) {}
+        try { w.setAlwaysOnTop(true, 'screen-saver') } catch (err) {}
+        try { w.moveTop() } catch (err) {}
+        // 再延后一拍重做一次：show 是异步落地的，紧接着调可能被系统的
+        // "显示过程"覆盖掉。120ms 足够，用户感知不到。
+        setTimeout(() => {
+          try {
+            if (w.isDestroyed()) return
+            // ⚠️ **来回切一次 setFocusable**：Windows 上样式一旦被系统"忘记"，
+            //    单纯重复设置同一个值可能不触发重建；先设成 true 再设回 false
+            //    才会真的重算窗口样式（WS_EX_NOACTIVATE / WS_EX_TRANSPARENT）。
+            //    这是让"重新断言"真正生效的关键一步。
+            w.setFocusable(true)
+            w.setFocusable(petFocusable)
+            w.setIgnoreMouseEvents(false)
+            w.setAlwaysOnTop(true, 'screen-saver')
+            w.moveTop()
+          } catch (err) {}
+        }, 120)
         w.__fsWasVisible = false
+        // ⚠️⚠️ **让路恢复后必须强制重新评估鼠标穿透。**
+        //    主进程和渲染端**各有一个状态缓存**：
+        //        main.cjs:      if (interactiveOf.get(w) === on) return
+        //        shell.js:      if (on === lastInteractive) return
+        //    两边都是"值没变就跳过"。而 hide()/showInactive() 之后
+        //    Electron 那边窗口的**实际**穿透状态可能已经复位，
+        //    两个缓存却还认为"没变" → **谁都不重新下发** →
+        //    窗口永远停在"点一下直接穿到桌面"的状态 = 用户报的"点不了"。
+        //    所以这里：① 清掉主进程的缓存 ② 通知渲染端也清掉并重新评估。
+        interactiveOf.delete(w)
+        // ⚠️⚠️ **光清缓存还不够 —— 必须先"破死锁"。**
+        //    如果窗口停在"穿透"状态、而 setIgnoreMouseEvents(true,{forward:true})
+        //    的转发又恰好没生效，渲染端就**永远收不到 mousemove** →
+        //    它那个"按指针位置判定要不要接管"的逻辑永远没机会跑 →
+        //    窗口永远是穿透的 = 用户报的"一点反应都没有"。
+        //    所以这里**强制接管一次**（哪怕只是一瞬间）：
+        //    下一次鼠标移动一定能到渲染端，它就能按真实指针位置重新判定，
+        //    该穿透再自己切回穿透。**破掉死锁，把控制权还给渲染端。**
+        try { w.setIgnoreMouseEvents(false) } catch (err) {}
+        interactiveOf.set(w, true)
+        try { w.webContents.send('pet:reeval-interactive') } catch (err) {}
+        // ⚠️⚠️ **恢复时只做一次，绝对不要连续催。**
+        //    上一版这里写了"每 800ms 催一次、共 6 次"，想的是"怕消息被丢"。
+        //    实测日志证明这个想法**有害**：
+        //        穿透状态 → 穿透
+        //        穿透状态 → 接管（可点）
+        //        穿透状态 → 穿透
+        //        穿透状态 → 接管（可点）   ← 每秒横跳好几次
+        //    因为主进程在强制"接管"，而渲染端按真实指针位置又判成"穿透"，
+        //    两边**高频对打**。而高频切 setIgnoreMouseEvents 本身就会让
+        //    点击送不进窗口 —— 用户报的"一点反应都没有"，很可能就是它造成的。
+        //    （日志里最后状态明明是"接管（可点）"，却还是点不了 ——
+        //      说明问题不在"最终状态"，而在"状态一直在抖"。）
+        //    结论：恢复时**只做一次**，之后完全交给渲染端按指针位置自己判定。
+        // —— 诊断：把窗口恢复后的**真实状态**记下来 ——
+        // "点不了"查了四轮都没解决，不再靠推理。这几项一旦异常，
+        // 日志一眼就能定位：不可见 / 位置离谱 / 渲染进程没响应。
+        setTimeout(() => {
+          try {
+            log('让路恢复: visible=' + w.isVisible() +
+                ' bounds=' + JSON.stringify(w.getBounds()) +
+                ' destroyed=' + w.isDestroyed())
+          } catch (err) {}
+        }, 300)
+        // ⚠️ **让路恢复后必须验一下渲染进程真的醒了。**
+        //    让路时上面那句 setBackgroundThrottling(true) 会把它节流"睡着"，
+        //    而 showInactive() + 关掉节流**并不保证**它能醒来 ——
+        //    实测症状：窗口和画面都还在，但**点什么都没反应**（用户报的"卡死"），
+        //    而且既没崩溃也没退出，render-process-gone / unresponsive 都指望不上。
+        //    所以这里主动探一次：executeJavaScript 必须渲染进程真的跑起来才会
+        //    resolve，2 秒回不来就重载自愈。用 webContents.reload()，
+        //    不是 location.reload()（后者在本应用里会卡在永不提交的导航上）。
+        try {
+          const probe = Promise.race([
+            w.webContents.executeJavaScript('1'),
+            new Promise((resolve, reject) => setTimeout(() => reject(new Error('timeout')), 2000)),
+          ])
+          probe.catch(() => {
+            log('让路恢复后渲染进程没响应 → 重载自愈')
+            try { if (!w.isDestroyed() && !quitting) w.reload() } catch (err) {}
+          })
+        } catch (err) {}
       }
     } catch (err) {}
   }
@@ -320,8 +444,20 @@ function makePetWindow(port, primary) {
   log('createWindow: port=' + port + ' root=' + ROOT)
   const b = displayBounds()
   log('createWindow: bounds=' + JSON.stringify(b))
+  // —— 小窗口架构：窗口 = 跟随桌宠的**小窗**，不再全屏透明 ——
+  // 尺寸 900×900：桌宠盒子（约 375×375）钉在窗口**右下**，上方留 ~525px
+  // 给 ☰ 菜单/气泡/米粒面板（它们都以桌宠为锚、随窗口走）。
+  // ⚠️ **两维都必须 ≥893**：挂件的尺寸公式是 min(250, min(100vw,100vh)×0.28)×缩放
+  //    —— 窗口窄了桌宠会跟着缩小（实测 640 宽 → 桌宠缩到 160px）。
+  // 出生位置 = 工作区右下（和旧行为一致：立绘贴工作区右下、任务栏上沿）。
+  // 好处：① 不再大面积覆盖视频（点击/重绘不会挤掉视频的硬件叠加层）；
+  //       ② 合成器缓冲从全屏降到小窗（显存/内存齐降）；
+  //       ③ "全屏让路"仍保留（真全屏应用前台时照样自动隐藏）。
+  const PET_WIN_W = 900
+  const PET_WIN_H = Math.min(900, Math.max(600, b.height - 80))
   const w = new BrowserWindow({
-    x: b.x, y: b.y, width: b.width, height: b.height,
+    x: b.x + b.width - PET_WIN_W, y: b.y + b.height - PET_WIN_H,
+    width: PET_WIN_W, height: PET_WIN_H,
     transparent: true,
     frame: false,
     resizable: false,
@@ -348,6 +484,12 @@ function makePetWindow(port, primary) {
       affinity: 'dafatfish-pet',
     },
   })
+  w.__petWinSize = { width: PET_WIN_W, height: PET_WIN_H }
+  // ⚠️ **版本指纹**：这行只在「小窗架构」里存在。
+  //    排查"改了没用"时，先看日志有没有这行 —— 没有就说明跑的不是这个包。
+  //    （踩过的坑：小窗版和全屏版的 exe 名字一样、大小也一样，
+  //      靠日志文案才分得出来；而两句关键日志只在其中一版存在。）
+  log('★ 架构指纹：小窗版（窗口 ' + PET_WIN_W + '×' + PET_WIN_H + '，跟随桌宠移动）')
 
   w.setAlwaysOnTop(true, 'screen-saver')
   // ⚠️ **不可激活窗口**：点击桌宠不抢焦点。看视频/直播时点她，视频窗口
@@ -355,13 +497,11 @@ function makePetWindow(port, primary) {
   //    （用户实测）。鼠标事件与焦点无关，照常收（命中测试基于窗口层级）。
   //    代价：桌宠自己收不到键盘事件（弹弓的 ESC 取消失效，其余取消路径
   //    —— 松右键/失焦 —— 不受影响；弹弓蓄力本身是鼠标操作）。
-  try { w.setFocusable(false) } catch (err) {}
+  try { w.setFocusable(petFocusable) } catch (err) {}
   try { w.setVisibleOnAllWorkspaces(true, { visibleOnFullScreen: true }) } catch (err) {}
-  // ⚠️ Windows 会把普通窗口的尺寸钳到"工作区"（任务栏那一条不算）——
-  //    构造时传整屏 bounds 也没用，实测窗口只有 2048×1104 而屏幕是 2048×1152，
-  //    于是屏幕边缘有一条**她的位置到不了**（用户报的"有一块拖不到"）。
-  //    建好之后再 setBounds 一次，才能真的盖住整屏。
-  try { w.setBounds(b) } catch (err) {}
+  // （旧全屏架构的"再 setBounds 一次盖住整屏"已随小窗口改造移除——
+  //   窗口现在就是 PET_WIN_W×PET_WIN_H 的小窗，尺寸/位置由上面的构造参数决定，
+  //   之后的移动走 pet:move-window，由渲染进程的物理位置驱动。）
   // 默认整窗穿透；鼠标移到挂件上时由渲染进程通知打开
   w.setIgnoreMouseEvents(true, { forward: true })
   pets.push(w)
@@ -436,6 +576,19 @@ function makePetWindow(port, primary) {
     log('渲染进程异常退出', JSON.stringify(details))
     if (!quitting) setTimeout(() => { try { w.reload() } catch (err) {} }, 1500)
   })
+  // ⚠️⚠️ **"无响应"必须单独接。** 上面那条只管"进程没了"，
+  //    而**卡住不动的进程既没崩也没退出** —— render-process-gone 不会触发，
+  //    表现就是用户说的"**怎么点都没反应**"，而且**永远不会自愈**。
+  //    实测触发路径：全屏视频 → 让路时 setBackgroundThrottling(true) 把渲染进程
+  //    节流睡着 → 退出全屏 showInactive() + setBackgroundThrottling(false) 之后
+  //    它没醒过来 → 窗口还在、画面还在，但事件全都不响应。
+  //    Electron 对这种情况会发 'unresponsive'，这里 reload 一次即可自愈。
+  //    （用 webContents.reload()，不是 location.reload() —— 后者在本应用里
+  //      会发起一次永远不提交的导航，反而更死。见下方 pet:reload 那段注释。）
+  w.webContents.on('unresponsive', () => {
+    log('渲染进程无响应 → 重载自愈')
+    if (!quitting) { try { w.reload() } catch (err) {} }
+  })
   w.webContents.on('did-fail-load', (e, code, desc) => log('页面加载失败', code, desc))
 
   // 窗口本身不允许被关掉（它是桌宠的容器）；要退出请走托盘
@@ -459,6 +612,7 @@ function setInteractive(on, w) {
     interactiveOf.set(w, on)
     if (on) w.setIgnoreMouseEvents(false)
     else w.setIgnoreMouseEvents(true, { forward: true })
+    log('穿透状态 → ' + (on ? '接管（可点）' : '穿透'))     // 诊断：谁在什么时候改的
   } catch (err) { log('切换鼠标穿透失败', err && err.message) }
 }
 
@@ -577,6 +731,70 @@ ipcMain.handle('pet:debug-rects', () => {
 // 渲染进程报上来的**立绘**矩形（屏幕坐标）+ 有没有正在被拖。
 // dragging 是给被拖的那只推不动、只能靠对方让开用的（见 renderer/pet-collide.js）。
 let rectSeq = 0
+// —— 小窗口架构：渲染进程驱动窗口移动 ——
+// 渲染进程的物理位置（physPos，屏幕坐标）就是窗口的位置：拖拽/抛掷/吸附/
+// 每次落定都经这里把窗口挪过去。只挪位置、不改尺寸（尺寸固定，见 PET_WIN_W/H）。
+// 限幅：x/y 非有限值或离屏超过一屏就直接忽略（防御非法值把窗口扔丢）。
+// ⚠️ 渲染端问"窗口的真实尺寸"。
+//    起因：渲染端的 `window.innerWidth` 是 **903**，而窗口实际是 **900** ——
+//    透明无边框窗口会多出 1.5px×2 的边缘，于是 innerWidth 比真实宽度大 3px。
+//    启动落位要减掉窗口尺寸，用 903 算就会**向左上偏 3px**（用户实测）。
+//    主进程的 getBounds() 才是准的，所以让渲染端来问。
+ipcMain.handle('pet:win-size', (e) => {
+  try {
+    const w = BrowserWindow.fromWebContents(e.sender)
+    if (!w || w.isDestroyed()) return null
+    const b = w.getBounds()
+    return { width: b.width, height: b.height }
+  } catch (err) { return null }
+})
+
+// ⚠️⚠️ **让主进程直接把窗口摆到工作区右下角。**
+//
+//    为什么不让渲染端算：渲染端要拿"窗口尺寸"来算立绘在窗口内的偏移，
+//    而它在浏览器里能读到的三个宽度**各不相同**（实测）：
+//        window.innerWidth              = 903   （含边框）
+//        getBounds().width              = 901   （窗口外框）
+//        documentElement.clientWidth    = 900   （内容区）
+//    用错任何一个都会偏 1~3px，而且换机器/换缩放还可能变。
+//
+//    主进程这边是精确的：workArea 给出工作区、getBounds 给出窗口真实外框，
+//    两者相减就是"窗口左上角应该在哪"。
+//
+//    时机：等渲染端**主动说它就绪了**（pet:renderer-ready）再摆 ——
+//    之前试过 invoke / 定时推送，都栽在"渲染端注册监听的时机
+//    比 did-finish-load 晚"上。让渲染端主动开口，时序问题自然消失。
+ipcMain.on('pet:renderer-ready', (e) => {
+  try {
+    const w = BrowserWindow.fromWebContents(e.sender)
+    if (!w || w.isDestroyed()) return
+    const wa = screen.getPrimaryDisplay().workArea
+    const b = w.getBounds()
+    const x = wa.x + wa.width - b.width
+    const y = wa.y + wa.height - b.height
+    log('主进程摆窗口到工作区右下角: workArea=' + JSON.stringify(wa) +
+        ' 窗口=' + b.width + 'x' + b.height + ' → [' + x + ',' + y + ']')
+    w.setBounds({ x, y, width: b.width, height: b.height })
+    // 把摆好的位置告诉渲染端，让它的 physPos 跟窗口保持一致
+    try { w.webContents.send('pet:pos-synced', { x, y }) } catch (err) {}
+  } catch (err) {}
+})
+
+ipcMain.on('pet:move-window', (e, p) => {
+  const w = BrowserWindow.fromWebContents(e.sender)
+  if (!w || w.isDestroyed() || !p) return
+  // ⚠️ **让路中一律忽略。** 让路时窗口被挪到屏幕外，而渲染端的物理还在跑，
+  //    它会不断发 moveWindow 想把自己挪回原位 —— 不挡住的话让路就白做了
+  //    （桌宠会自己跑回屏幕上，盖在视频上）。
+  if (w.__fsYielded) return
+  const x = Number(p.x), y = Number(p.y)
+  if (!isFinite(x) || !isFinite(y)) return
+  const size = w.__petWinSize || { width: w.getBounds().width, height: w.getBounds().height }
+  const b = displayBounds()
+  const cx = Math.min(Math.max(x, b.x - size.width), b.x + b.width)
+  const cy = Math.min(Math.max(y, b.y - size.height), b.y + b.height)
+  try { w.setBounds({ x: Math.round(cx), y: Math.round(cy), width: size.width, height: size.height }) } catch (err) {}
+})
 ipcMain.on('pet:report-rect', (e, r) => {
   const w = BrowserWindow.fromWebContents(e.sender)
   if (!w || !r) return
@@ -1046,30 +1264,52 @@ function trayIcon() {
 function buildTray() {
   try {
     tray = new Tray(trayIcon())
+    // ⚠️⚠️ **原生托盘菜单点任何一项都会自动关闭** —— 这是 Electron/系统的行为，
+    //    没有开关可以关掉它。用户要求"点按钮不要直接退出菜单"（想连着点几项，
+    //    比如先开关全屏让路、再开关拖动物理）。
+    //    折中方案：把菜单存下来，**非退出项**点完后**立刻重新弹出**。
+    //    代价是极短的重绘闪烁；真正无闪烁要自绘一个菜单窗口，那是另一个专项。
+    //    「退出」不加这个包装 —— 点了就该退，不能又弹回来。
+    let trayMenu = null
+    // ⚠️⚠️ **不要用 popUpContextMenu 重新弹出。**
+    //    上一版为了让"点一项后菜单还开着"这么做过，但实测：重新弹出会让菜单
+    //    **跳到鼠标当前位置重开**（用户反馈"会乱动，要保持托盘原菜单位置不动"）。
+    //    原生托盘菜单**无法同时做到"保持打开"和"保持原位"** —— 这是系统菜单，
+    //    没有位置参数。要那个效果只能自绘一个菜单窗口（另一个专项）。
+    //    所以这里只保留"统一包一层错误捕获"，不再重新弹出。
+    const keepOpen = (fn) => (...a) => {
+      try { fn(...a) } catch (err) { log('托盘菜单项出错', err && err.message) }
+    }
     const menu = Menu.buildFromTemplate([
-      { label: '显示 / 隐藏', click: () => { if (!win) return; win.isVisible() ? win.hide() : win.showInactive() } },
+      { label: '显示 / 隐藏', click: keepOpen(() => { if (!win) return; win.isVisible() ? win.hide() : win.showInactive() }) },
       { type: 'separator' },
-      { label: '设置 DeepSeek API Key…', click: openSettings },
-      { label: '回到右下角', click: () => win && win.webContents.send('pet:reset-pos') },
-      { label: '重新加载挂件', click: () => win && win.webContents.reload() },
+      { label: '设置 DeepSeek API Key…', click: keepOpen(openSettings) },
+      { label: '回到右下角', click: keepOpen(() => win && win.webContents.send('pet:reset-pos')) },
+      { label: '重新加载挂件', click: keepOpen(() => win && win.webContents.reload()) },
       {
         label: '强制鼠标穿透（她点不动时先关掉）',
         type: 'checkbox',
         checked: false,
-        click: (item) => win && win.webContents.send('pet:force-passthrough', !!item.checked),
+        click: keepOpen((item) => win && win.webContents.send('pet:force-passthrough', !!item.checked)),
       },
+      // ⚠️ 「桌宠可点模式」开关已删除（2026-09-29）。
+      //    它是排查"全屏视频进出后点不了"时加的临时诊断项，问题已解决
+      //    （根因是让路走了 hide/show，改成 setOpacity(0) 后不再复现；
+      //      实测无论开关与否都能点，说明与 setFocusable 无关）。
+      //    petFocusable 变量保留（默认 false = 不可激活，避免点桌宠抢焦点
+      //    把视频弄暂停），只是不再暴露成开关。
       {
         // 与挂件 ☰ 菜单里的「拖动物理」是同一个值（都在 localStorage 里）
         label: '拖动物理（弹簧跟随 + 松手抛出）',
         type: 'checkbox',
         checked: true,
-        click: (item) => win && win.webContents.send('pet:drag-physics', !!item.checked),
+        click: keepOpen((item) => win && win.webContents.send('pet:drag-physics', !!item.checked)),
       },
       {
         label: '全屏视频时自动让路（隐藏桌宠，不挡视频）',
         type: 'checkbox',
         checked: fsYieldEnabled,
-        click: (item) => {
+        click: keepOpen((item) => {
           fsYieldEnabled = !!item.checked
           saveFsYieldPref()
           if (fsYieldEnabled && !fsWatch && fsWatchModRef) {
@@ -1082,15 +1322,17 @@ function buildTray() {
           if (fsWatch) fsWatch.setEnabled(fsYieldEnabled)
           if (!fsYieldEnabled) setPetsYieldForFullscreen(false)   // 关掉时把藏着的放回来
           log('全屏让路开关 → ' + fsYieldEnabled)
-        },
+        }),
       },
       { type: 'separator' },
-      { label: '打开数据目录', click: () => shell.openPath(DATA_DIR) },
-      { label: '打开日志', click: () => shell.openPath(LOG_FILE) },
-      { label: '开发者工具', click: () => win && win.webContents.openDevTools({ mode: 'detach' }) },
+      { label: '打开数据目录', click: keepOpen(() => shell.openPath(DATA_DIR)) },
+      { label: '打开日志', click: keepOpen(() => shell.openPath(LOG_FILE)) },
+      { label: '开发者工具', click: keepOpen(() => win && win.webContents.openDevTools({ mode: 'detach' })) },
       { type: 'separator' },
+      // ⚠️ 唯一**不**重新弹出的项：点了就是要退出
       { label: '退出', click: () => { quitting = true; app.quit() } },
     ])
+    trayMenu = menu
     tray.setToolTip('大肥鱼桌宠')
     tray.setContextMenu(menu)
     tray.on('double-click', () => { if (win) win.isVisible() ? win.hide() : win.showInactive() })
@@ -1803,6 +2045,7 @@ async function runSelfTest() {
           const cx = Math.round(ir2.left + ir2.width / 2)
           const cy = Math.round(ir2.top + ir2.height / 2)
           const base = { bubbles: true, cancelable: true, clientX: cx, clientY: cy,
+                         screenX: cx + (window.screenX || 0), screenY: cy + (window.screenY || 0),
                          button: 0, pointerType: 'mouse', pointerId: 1, isPrimary: true }
           // ⚠️ .dshwv-pop 是**静态元素**（一直在 DOM 里），开合靠加 dshwv-pop-open 类。
           //    所以判据是那个类，不是元素在不在。
@@ -1833,6 +2076,7 @@ async function runSelfTest() {
           } catch (e) { out.elemDiagError = String(e && e.message) }
           const mk = (type, x, extra) => new PointerEvent(type, Object.assign({
             bubbles: true, cancelable: true, clientX: x, clientY: dsy,
+            screenX: x + (window.screenX || 0), screenY: dsy + (window.screenY || 0),
             button: 0, pointerType: 'mouse', pointerId: 9, isPrimary: true,
           }, extra || {}))
           ;(document.elementFromPoint(dsx, dsy) || document.body).dispatchEvent(mk('pointerdown', dsx, { buttons: 1 }))
@@ -1873,6 +2117,7 @@ async function runSelfTest() {
           const tsy = Math.round(tIr.top + tIr.height / 2)
           const mk2 = (type, x, y, extra) => new PointerEvent(type, Object.assign({
             bubbles: true, cancelable: true, clientX: x, clientY: y,
+            screenX: x + (window.screenX || 0), screenY: y + (window.screenY || 0),
             button: 0, pointerType: 'mouse', pointerId: 11, isPrimary: true,
           }, extra || {}))
           ;(document.elementFromPoint(tsx, tsy) || document.body).dispatchEvent(mk2('pointerdown', tsx, tsy, { buttons: 1 }))
@@ -2073,6 +2318,7 @@ async function runSelfTest() {
               const by2 = Math.max(5, pr4.top + 10)
               const mkX = (t) => new PointerEvent(t, {
                 bubbles: true, cancelable: true, clientX: bx2, clientY: by2,
+                screenX: bx2 + (window.screenX || 0), screenY: by2 + (window.screenY || 0),
                 button: 0, buttons: t === 'pointerdown' ? 1 : 0,
                 pointerType: 'mouse', pointerId: 41, isPrimary: true,
               })
@@ -2197,6 +2443,7 @@ async function runSelfTest() {
               const wy = Math.round(wr0.top + wr0.height / 2)
               const mkM = (type) => new PointerEvent(type, {
                 bubbles: true, cancelable: true, clientX: wx, clientY: wy,
+                screenX: wx + (window.screenX || 0), screenY: wy + (window.screenY || 0),
                 button: 0, buttons: type === 'pointerdown' ? 1 : 0,
                 pointerType: 'mouse', pointerId: 31, isPrimary: true,
               })
@@ -2270,6 +2517,7 @@ async function runSelfTest() {
           const osy = Math.round(oIr.top + oIr.height / 2)
           const mk4 = (type, x, y, extra) => new PointerEvent(type, Object.assign({
             bubbles: true, cancelable: true, clientX: x, clientY: y,
+            screenX: x + (window.screenX || 0), screenY: y + (window.screenY || 0),
             button: 0, pointerType: 'mouse', pointerId: 13, isPrimary: true,
           }, extra || {}))
           ;(document.elementFromPoint(osx, osy) || document.body).dispatchEvent(mk4('pointerdown', osx, osy, { buttons: 1 }))
@@ -2317,7 +2565,7 @@ async function runSelfTest() {
             hasBuildHead: rtxt.indexOf('buildHeadCss') >= 0,
             // 桌宠版**保持上游默认值 10**（两套翻碗动画都按上游来：
             // 抓现行大概率倒扣在旁边地面，10% 撞上头顶；被彩蛋炸到必定上头顶）。
-            headChanceDefault: rtxt.indexOf('headChancePct: 10') >= 0,
+            headChanceDefault: rtxt.indexOf('headChancePct: 50') >= 0,
             hasHeadChanceKey: rtxt.indexOf('headChancePct') >= 0,
             headChanceSnippet: (function () {
               var out2 = []
@@ -2345,6 +2593,7 @@ async function runSelfTest() {
           const bsy = Math.round(bIr.top + bIr.height / 2)
           const mk3 = (type, x, y, extra) => new PointerEvent(type, Object.assign({
             bubbles: true, cancelable: true, clientX: x, clientY: y,
+            screenX: x + (window.screenX || 0), screenY: y + (window.screenY || 0),
             button: 0, pointerType: 'mouse', pointerId: 12, isPrimary: true,
           }, extra || {}))
           ;(document.elementFromPoint(bsx, bsy) || document.body).dispatchEvent(mk3('pointerdown', bsx, bsy, { buttons: 1 }))
@@ -2457,6 +2706,7 @@ async function runSelfTest() {
                 const by = Math.round(br.top + br.height / 2)
                 const mkC = (type) => new PointerEvent(type, {
                   bubbles: true, cancelable: true, clientX: bx, clientY: by,
+                  screenX: bx + (window.screenX || 0), screenY: by + (window.screenY || 0),
                   button: 0, buttons: type === 'pointerdown' ? 1 : 0,
                   pointerType: 'mouse', pointerId: 21, isPrimary: true,
                 })
@@ -2691,6 +2941,7 @@ async function runSelfTest() {
               out.pgElemAtPress = tgtP.tagName + '.' + String(tgtP.className || '').slice(0, 30)
               const mkP = (type, extra) => new PointerEvent(type, Object.assign({
                 bubbles: true, cancelable: true, clientX: cx, clientY: cy,
+                screenX: cx + (window.screenX || 0), screenY: cy + (window.screenY || 0),
                 button: 0, pointerType: 'mouse', pointerId: 401, isPrimary: true,
               }, extra || {}))
               tgtP.dispatchEvent(mkP('pointerdown', { buttons: 1 }))
@@ -3749,7 +4000,7 @@ async function runSelfTest() {
       'openDshWeb 可用=' + probe.hasOpenDshWebApi + '  参考端口=' + probe.openWebHintPort)
 
     say(probe.riceHeadMachinery === true,
-      '★ 米粒用的是上游 0.3.7 的两套翻碗动画（dshrice-spill + dshrice-head，headChancePct 保持上游默认 10）',
+      '★ 米粒用的是上游 0.3.7 的两套翻碗动画（dshrice-spill + dshrice-head，headChancePct 已按要求改成 50）',
       JSON.stringify(probe.riceHeadInfo))
     say(probe.spillAnimFound === true, '找到翻碗动画（Web Animations API）',
       '时长 ' + probe.spillAnimDuration + 'ms，页面上共 ' + probe.spillAnimCount + ' 个动画')

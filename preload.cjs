@@ -10,6 +10,8 @@ contextBridge.exposeInMainWorld('petApi', {
   getDataDir: () => ipcRenderer.invoke('pet:data-dir'),
   // 鼠标是否穿透由渲染进程按"指针在不在挂件上"决定
   setInteractive: (on) => ipcRenderer.send('pet:set-interactive', !!on),
+  // 小窗口架构：渲染进程的物理位置（屏幕坐标）驱动窗口移动
+  moveWindow: (p) => ipcRenderer.send('pet:move-window', p),
   // 诊断：IPC 监听器数量。
   // ⚠️ ipcRenderer.on 注册的监听器**不会随页面重载自动清掉**（同一个渲染进程），
   //    所以任何"重载页面"的开关都会让监听器越积越多 —— 一次操作触发 N 次重载，
@@ -46,6 +48,15 @@ contextBridge.exposeInMainWorld('petApi', {
   autostartSet: (on) => ipcRenderer.invoke('pet:autostart-set', !!on),
   // 多桌宠：「打开桌宠」再开一只；没有数量限制
   spawnPet: () => ipcRenderer.invoke('pet:spawn'),
+  // 窗口的真实尺寸（getBounds）。渲染端的 window.innerWidth 在透明无边框窗口上
+  // 会比真实值大 3px（1.5px×2 的边缘），启动落位用它算会向左上偏 3px。
+  winSize: () => ipcRenderer.invoke('pet:win-size'),
+  // ⚠️ 渲染端**主动说"我就绪了"** —— 主进程收到后才把窗口摆到工作区右下角。
+  //    这个方向（渲染端先开口）能彻底绕开"主进程推得太早、渲染端还没注册监听"的时序问题。
+  rendererReady: () => ipcRenderer.send('pet:renderer-ready'),
+  // 主进程摆好窗口后把位置回给渲染端，让 physPos 跟窗口保持一致
+  onPosSynced: (fn) => ipcRenderer.on('pet:pos-synced', (e, p) => { try { fn(p) } catch (err) {} }),
+  onWinSize: (fn) => ipcRenderer.on('pet:win-size', (e, sz) => { try { fn(sz) } catch (err) {} }),
   petCount: () => ipcRenderer.invoke('pet:count'),
   // 自检用：看各只上报的立绘矩形
   petDebugRects: () => ipcRenderer.invoke('pet:debug-rects'),
@@ -81,6 +92,13 @@ contextBridge.exposeInMainWorld('petApi', {
   onSetPos: (fn) => ipcRenderer.on('pet:set-pos', (e, d) => { try { fn(d) } catch (err) {} }),
   // 桌宠只数变化（主进程推）—— 只有一只时前端可以完全不做碰撞相关开销
   onPetCount: (fn) => ipcRenderer.on('pet:count-changed', (e, n) => { try { fn(n) } catch (err) {} }),
+  // 让路恢复后主进程要求"重新评估鼠标穿透"。
+  // 必须由主进程主动要求：渲染端自己有个 lastInteractive 缓存，
+  // 值没变就不重发 —— 而窗口 hide/show 之后实际状态可能已经不一致，
+  // 两边都以为"没变"就永远卡住（用户报的"全屏视频进出后点不了"）。
+  onReevalInteractive: (fn) => ipcRenderer.on('pet:reeval-interactive', () => { try { fn() } catch (err) {} }),
+  // 全屏让路：主进程要在 260ms 后 hide，先让渲染端把画面淡出
+  onFadeOut: (fn) => ipcRenderer.on('pet:fade-out', () => { try { fn() } catch (err) {} }),
   // 主进程碰撞世界下发的冲量 + 位置分离（20Hz）
   onImpulse: (fn) => ipcRenderer.on('pet:impulse', (e, d) => { try { fn(d) } catch (err) {} }),
   // 桌宠互撞的冲量转发：撞人的那只把自己该给同伴的份额发过来，
