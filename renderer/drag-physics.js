@@ -1761,6 +1761,9 @@
       try {
         if (api.winSize) api.winSize().then(fixStartPos).catch(function () {})
       } catch (e) {}
+      // 诊断：记录"监听已注册"的时刻。跟主进程那条"推送窗口尺寸 #1/#20"对照，
+      // 就能看出是"主进程没推"还是"渲染端注册得太晚、消息全丢了"。
+      log('启动落位修正：监听已注册（onWinSize=' + !!api.onWinSize + ' winSize=' + !!api.winSize + '）')
     applyOverride()
     persistPosition()        // 首次接管也把当前位置落盘
     // 注册顺序很重要：必须是 document + capture，且早于挂件

@@ -539,21 +539,30 @@ function makePetWindow(port, primary) {
   w.webContents.on('did-finish-load', () => {
     try { sendSpawnSpot(w) } catch (err) {}
     broadcastPetCount()
-    // ⚠️⚠️ **把窗口的真实尺寸推给渲染端。**
+    // ⚠️⚠️ **把窗口的真实尺寸推给渲染端 —— 要持续推，不能只推一两次。**
     //    渲染端的 window.innerWidth 在透明无边框窗口上不准（实测 903，
     //    而窗口真实是 901）—— 启动落位要减掉窗口尺寸，用错就偏。
-    //    用"推"而不是让渲染端"invoke"：invoke 实测没跑起来
-    //    （可能是调用时机早于 handle 注册），推更可靠。
-    //    推两次：did-finish-load 之后渲染端的模块可能还在初始化。
-    const pushSize = () => {
+    //
+    //    为什么持续推：渲染端**注册监听**是在 drag-physics 的 start() 里，
+    //    而那个要等挂件就绪（实测 did-finish-load 之后还要几百毫秒到几秒）。
+    //    只推一两次会全部落在监听注册之前 → 消息丢掉 → 什么也没发生
+    //    （上一版 60ms/1200ms 两次就是这么丢的，日志里连"修正"都没有）。
+    //    这里每 500ms 推一次、共 20 次（10 秒）—— 覆盖任何启动速度。
+    //    渲染端有 didFixStart 锁，只会应用一次，多推无害。
+    //    主进程这边也记一笔，好区分"没推"和"没收到"。
+    let pushed = 0
+    const sizeTimer = setInterval(() => {
+      pushed++
       try {
-        if (w.isDestroyed()) return
+        if (w.isDestroyed() || pushed > 20) { clearInterval(sizeTimer); return }
         const b = w.getBounds()
         w.webContents.send('pet:win-size', { width: b.width, height: b.height })
+        if (pushed === 1 || pushed === 20) {
+          log('推送窗口尺寸 #' + pushed + ' → ' + b.width + 'x' + b.height)
+        }
       } catch (err) {}
-    }
-    setTimeout(pushSize, 60)
-    setTimeout(pushSize, 1200)
+    }, 500)
+    w.on('closed', () => { try { clearInterval(sizeTimer) } catch (err) {} })
   })
 
   // 页面从本地服务加载（同源），而不是 file://
