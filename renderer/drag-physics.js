@@ -1295,6 +1295,13 @@
     //    拖拽会自己追自己停下来。屏幕坐标不随窗口移动，是唯一的真值。
     drag = {
       startX: e.screenX, startY: e.screenY,
+      // ⚠️⚠️ **按下时把窗口位置固定住，整个拖拽过程都用它。**
+      //    从全屏版迁移的关键：全屏版存 origLeft/origTop（按下后不再变），
+      //    抓取点 = startX - origLeft 是个常量。
+      //    小窗版原来写 `grabX = drag.startX - physPos[0]`，而 physPos
+      //    **每帧都在变**（窗口跟着拖拽移动）→ grabX 每帧变 → 目标再变，
+      //    正反馈"窗口追自己" → 表现就是"一拖就乱跑"。
+      origLeft: physPos[0], origTop: physPos[1],
       w: root.offsetWidth || 375, h: root.offsetHeight || 375, moved: false,
     }
     trail = [[nowSec(), e.screenX, e.screenY]]
@@ -1365,8 +1372,8 @@
     while (trail.length && trail[0][0] < cutoff) trail.shift()
 
     // 抓取点：按下时指针相对**窗口左上角**的偏移（屏幕坐标差），拖动时保持
-    var grabX = drag.startX - physPos[0]
-    var grabY = drag.startY - physPos[1]
+    var grabX = drag.startX - drag.origLeft
+    var grabY = drag.startY - drag.origTop
     // 夹取：不让**立绘**跑出屏幕（挂件自己按盒子夹，会让立绘够不到屏幕顶/左）
     dragTarget = clampToBounds([e.screenX - grabX, e.screenY - grabY])
 
