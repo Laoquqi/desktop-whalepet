@@ -48,6 +48,9 @@ contextBridge.exposeInMainWorld('petApi', {
   autostartSet: (on) => ipcRenderer.invoke('pet:autostart-set', !!on),
   // 多桌宠：「打开桌宠」再开一只；没有数量限制
   spawnPet: () => ipcRenderer.invoke('pet:spawn'),
+  // 窗口的真实尺寸（getBounds）。渲染端的 window.innerWidth 在透明无边框窗口上
+  // 会比真实值大 3px（1.5px×2 的边缘），启动落位用它算会向左上偏 3px。
+  winSize: () => ipcRenderer.invoke('pet:win-size'),
   petCount: () => ipcRenderer.invoke('pet:count'),
   // 自检用：看各只上报的立绘矩形
   petDebugRects: () => ipcRenderer.invoke('pet:debug-rects'),

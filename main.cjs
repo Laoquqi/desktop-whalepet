@@ -735,6 +735,20 @@ let rectSeq = 0
 // 渲染进程的物理位置（physPos，屏幕坐标）就是窗口的位置：拖拽/抛掷/吸附/
 // 每次落定都经这里把窗口挪过去。只挪位置、不改尺寸（尺寸固定，见 PET_WIN_W/H）。
 // 限幅：x/y 非有限值或离屏超过一屏就直接忽略（防御非法值把窗口扔丢）。
+// ⚠️ 渲染端问"窗口的真实尺寸"。
+//    起因：渲染端的 `window.innerWidth` 是 **903**，而窗口实际是 **900** ——
+//    透明无边框窗口会多出 1.5px×2 的边缘，于是 innerWidth 比真实宽度大 3px。
+//    启动落位要减掉窗口尺寸，用 903 算就会**向左上偏 3px**（用户实测）。
+//    主进程的 getBounds() 才是准的，所以让渲染端来问。
+ipcMain.handle('pet:win-size', (e) => {
+  try {
+    const w = BrowserWindow.fromWebContents(e.sender)
+    if (!w || w.isDestroyed()) return null
+    const b = w.getBounds()
+    return { width: b.width, height: b.height }
+  } catch (err) { return null }
+})
+
 ipcMain.on('pet:move-window', (e, p) => {
   const w = BrowserWindow.fromWebContents(e.sender)
   if (!w || w.isDestroyed() || !p) return
@@ -2520,7 +2534,7 @@ async function runSelfTest() {
             hasBuildHead: rtxt.indexOf('buildHeadCss') >= 0,
             // 桌宠版**保持上游默认值 10**（两套翻碗动画都按上游来：
             // 抓现行大概率倒扣在旁边地面，10% 撞上头顶；被彩蛋炸到必定上头顶）。
-            headChanceDefault: rtxt.indexOf('headChancePct: 10') >= 0,
+            headChanceDefault: rtxt.indexOf('headChancePct: 50') >= 0,
             hasHeadChanceKey: rtxt.indexOf('headChancePct') >= 0,
             headChanceSnippet: (function () {
               var out2 = []
@@ -3955,7 +3969,7 @@ async function runSelfTest() {
       'openDshWeb 可用=' + probe.hasOpenDshWebApi + '  参考端口=' + probe.openWebHintPort)
 
     say(probe.riceHeadMachinery === true,
-      '★ 米粒用的是上游 0.3.7 的两套翻碗动画（dshrice-spill + dshrice-head，headChancePct 保持上游默认 10）',
+      '★ 米粒用的是上游 0.3.7 的两套翻碗动画（dshrice-spill + dshrice-head，headChancePct 已按要求改成 50）',
       JSON.stringify(probe.riceHeadInfo))
     say(probe.spillAnimFound === true, '找到翻碗动画（Web Animations API）',
       '时长 ' + probe.spillAnimDuration + 'ms，页面上共 ' + probe.spillAnimCount + ' 个动画')

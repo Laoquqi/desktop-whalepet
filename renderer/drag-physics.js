@@ -1730,6 +1730,29 @@
           ' screen=' + (window.screen ? (window.screen.width + 'x' + window.screen.height) : '?') +
           ' dpr=' + (window.devicePixelRatio || 1))
       } catch (e) {}
+      // ⚠️⚠️ **按"窗口的真实尺寸"再修正一次启动落位。**
+      //    上面那两行用的是 window.innerWidth/innerHeight —— 而透明无边框窗口上
+      //    **innerWidth 会比真实宽度大 3px**（1.5px×2 的边缘）。
+      //    实测：inner=903x903，而窗口真实是 900x900 ——
+      //    减多了 3px，启动位置就**向左上偏 3px**（用户报的正是这个）。
+      //    主进程的 getBounds() 才是准的，所以问它一次，把差值补回来。
+      try {
+        if (api.winSize) {
+          api.winSize().then(function (sz) {
+            try {
+              if (!sz || !sz.width || !sz.height) return
+              var ddx = window.innerWidth - sz.width
+              var ddy = window.innerHeight - sz.height
+              if (!ddx && !ddy) return
+              physPos = [physPos[0] + ddx, physPos[1] + ddy]
+              applyOverride()
+              log('按真实窗口尺寸修正启动落位: inner=' + window.innerWidth + 'x' + window.innerHeight +
+                  ' 真实=' + sz.width + 'x' + sz.height +
+                  ' 修正=' + ddx + ',' + ddy + ' → physPos=[' + physPos[0] + ',' + physPos[1] + ']')
+            } catch (e) {}
+          }).catch(function () {})
+        }
+      } catch (e) {}
     applyOverride()
     persistPosition()        // 首次接管也把当前位置落盘
     // 注册顺序很重要：必须是 document + capture，且早于挂件
