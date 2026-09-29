@@ -215,25 +215,19 @@ function setPetsYieldForFullscreen(hidden) {
         try { w.setIgnoreMouseEvents(false) } catch (err) {}
         interactiveOf.set(w, true)
         try { w.webContents.send('pet:reeval-interactive') } catch (err) {}
-        // ⚠️⚠️ **恢复后连续催几次，不要只催一次。**
-        //    只催一次的话，如果那一刻渲染进程还在"醒来"的过程中（让路期间被
-        //    系统降频、或者正在重排布局），这条消息就可能被丢掉 ——
-        //    结果窗口停在穿透状态，用户怎么点都没反应。
-        //    这里每 800ms 催一次、共 6 次（约 5 秒）：每一次都会
-        //      ① 清掉主进程的缓存 ② 强制接管 ③ 让渲染端也清缓存重新判定
-        //    任何一次落地都能救回来；渲染端一旦按真实指针位置判定为"穿透"，
-        //    它会自己发 setInteractive(false) 把状态定回去，所以不会一直占着鼠标。
-        for (let i = 1; i <= 6; i++) {
-          setTimeout(() => {
-            try {
-              if (w.isDestroyed()) return
-              interactiveOf.delete(w)
-              w.setIgnoreMouseEvents(false)
-              interactiveOf.set(w, true)
-              w.webContents.send('pet:reeval-interactive')
-            } catch (err) {}
-          }, 800 * i)
-        }
+        // ⚠️⚠️ **恢复时只做一次，绝对不要连续催。**
+        //    上一版这里写了"每 800ms 催一次、共 6 次"，想的是"怕消息被丢"。
+        //    实测日志证明这个想法**有害**：
+        //        穿透状态 → 穿透
+        //        穿透状态 → 接管（可点）
+        //        穿透状态 → 穿透
+        //        穿透状态 → 接管（可点）   ← 每秒横跳好几次
+        //    因为主进程在强制"接管"，而渲染端按真实指针位置又判成"穿透"，
+        //    两边**高频对打**。而高频切 setIgnoreMouseEvents 本身就会让
+        //    点击送不进窗口 —— 用户报的"一点反应都没有"，很可能就是它造成的。
+        //    （日志里最后状态明明是"接管（可点）"，却还是点不了 ——
+        //      说明问题不在"最终状态"，而在"状态一直在抖"。）
+        //    结论：恢复时**只做一次**，之后完全交给渲染端按指针位置自己判定。
         // —— 诊断：把窗口恢复后的**真实状态**记下来 ——
         // "点不了"查了四轮都没解决，不再靠推理。这几项一旦异常，
         // 日志一眼就能定位：不可见 / 位置离谱 / 渲染进程没响应。
