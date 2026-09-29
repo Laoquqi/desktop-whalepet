@@ -152,6 +152,11 @@ let interactive = false
 let fsWatch = null
 let fsWatchModRef = null                       // 模块引用：托盘里现开时要能创建实例
 let fsYieldEnabled = true                      // 默认开（用户要的行为就是默认发生）
+// ⚠️ true = 桌宠窗口可激活（普通窗口）。默认 false = 不可激活（点她不抢焦点，
+//    避免看视频时点桌宠把播放器弄暂停/闪白）。
+//    托盘里有个开关可以现场切换 —— 专门用来排查"点不了"：
+//    如果切过去就能点了，说明 WS_EX_NOACTIVATE 是元凶。
+let petFocusable = false
 let fsYieldActive = false                      // 当前正处于"全屏 → 已藏"状态
 const PREFS_FILE = () => path.join(DATA_DIR, 'pet-prefs.json')
 function loadFsYieldPref() {
@@ -190,18 +195,15 @@ function setPetsYieldForFullscreen(hidden) {
           //    260ms ≈ 渲染端那条 0.22s transition + 余量。
           try { w.webContents.send('pet:fade-out') } catch (err) {}
           w.__fsYielded = true                    // 让路中：pet:move-window 要忽略
-          w.__fsSavedBounds = w.getBounds()
           setTimeout(() => {
             try {
               if (w.isDestroyed() || !w.__fsYielded) return
-              const bb = displayBounds()
-              // 挪到工作区**左边外侧**，彻底离开可视区域
-              w.setBounds({
-                x: bb.x - (w.__fsSavedBounds ? w.__fsSavedBounds.width : 900) - 100,
-                y: bb.y,
-                width: w.__fsSavedBounds ? w.__fsSavedBounds.width : 900,
-                height: w.__fsSavedBounds ? w.__fsSavedBounds.height : 900,
-              })
+              // ⚠️⚠️ **只做透明，绝对不要把窗口挪出屏幕。**
+              //    上一版把它挪到工作区左边外侧，结果用户看到"退出全屏时桌宠会翻转一下"：
+              //    渲染端的 updateFacing 是按**屏幕中线**判朝向的（小窗架构下窗口中线
+              //    没有意义），窗口一被挪到左半边，它就判定"她在左半边"→ 翻转；
+              //    挪回来又翻回去 —— 一次进出全屏翻两次。
+              //    让路只需要"看不见"，setOpacity(0) 就够了，不需要动位置。
               w.setOpacity(0)
             } catch (err) {}
           }, 260)
@@ -212,15 +214,12 @@ function setPetsYieldForFullscreen(hidden) {
         //    不被调度。隐藏窗口本来就会被系统降频，这个节流省不了多少，去掉。
       } else if (w.__fsWasVisible) {
         try { w.webContents.setBackgroundThrottling(false) } catch (err) {}
-        // ⚠️ **恢复：把窗口挪回原位 + 透明度还原**（这一版没走过 hide，
-        //    所以不需要 showInactive，也就不存在"醒来之后点不了"的问题）。
+        // ⚠️ **恢复：只还原透明度**（这一版没走过 hide，也没挪过位置，
+        //    所以既不需要 showInactive，也不需要 setBounds）。
         w.__fsYielded = false
-        try {
-          if (w.__fsSavedBounds) w.setBounds(w.__fsSavedBounds)
-          w.setOpacity(1)
-        } catch (err) {}
+        try { w.setOpacity(1) } catch (err) {}
         // 再把建窗时设过的标志断言一遍（保险：万一系统在挪动过程中动了样式）
-        try { w.setFocusable(false) } catch (err) {}
+        try { w.setFocusable(petFocusable) } catch (err) {}
         try { w.setIgnoreMouseEvents(false) } catch (err) {}
         try { w.setAlwaysOnTop(true, 'screen-saver') } catch (err) {}
         try { w.moveTop() } catch (err) {}
@@ -234,7 +233,7 @@ function setPetsYieldForFullscreen(hidden) {
             //    才会真的重算窗口样式（WS_EX_NOACTIVATE / WS_EX_TRANSPARENT）。
             //    这是让"重新断言"真正生效的关键一步。
             w.setFocusable(true)
-            w.setFocusable(false)
+            w.setFocusable(petFocusable)
             w.setIgnoreMouseEvents(false)
             w.setAlwaysOnTop(true, 'screen-saver')
             w.moveTop()
@@ -498,7 +497,7 @@ function makePetWindow(port, primary) {
   //    （用户实测）。鼠标事件与焦点无关，照常收（命中测试基于窗口层级）。
   //    代价：桌宠自己收不到键盘事件（弹弓的 ESC 取消失效，其余取消路径
   //    —— 松右键/失焦 —— 不受影响；弹弓蓄力本身是鼠标操作）。
-  try { w.setFocusable(false) } catch (err) {}
+  try { w.setFocusable(petFocusable) } catch (err) {}
   try { w.setVisibleOnAllWorkspaces(true, { visibleOnFullScreen: true }) } catch (err) {}
   // （旧全屏架构的"再 setBounds 一次盖住整屏"已随小窗口改造移除——
   //   窗口现在就是 PET_WIN_W×PET_WIN_H 的小窗，尺寸/位置由上面的构造参数决定，
@@ -1247,6 +1246,29 @@ function buildTray() {
         type: 'checkbox',
         checked: false,
         click: keepOpen((item) => win && win.webContents.send('pet:force-passthrough', !!item.checked)),
+      },
+      {
+        // ⚠️⚠️ **这是给"点不了"准备的诊断开关，也是逃生口。**
+        //    窗口建的时候调过 setFocusable(false)（为了修"点桌宠抢焦点导致视频暂停"），
+        //    它在 Windows 上给窗口加了 WS_EX_NOACTIVATE。
+        //    我怀疑这类窗口在某些情况下**收不到点击**（mousemove 却能收到）——
+        //    勾上这个就是恢复成普通可激活窗口，点一下立刻能验证。
+        //    代价：点桌宠会抢焦点，部分播放器可能暂停/闪白（就是当初要修的那个问题）。
+        label: '桌宠可点模式（关掉"不可激活"，用于排查点不了）',
+        type: 'checkbox',
+        checked: petFocusable,
+        click: keepOpen((item) => {
+          petFocusable = !!item.checked
+          for (const w of pets) {
+            try {
+              if (w.isDestroyed()) continue
+              // 来回切一次，确保 Windows 真的重建窗口样式
+              w.setFocusable(true)
+              w.setFocusable(petFocusable)
+            } catch (err) {}
+          }
+          log('不可激活 → ' + (petFocusable ? '关（可点模式已开）' : '开'))
+        }),
       },
       {
         // 与挂件 ☰ 菜单里的「拖动物理」是同一个值（都在 localStorage 里）
