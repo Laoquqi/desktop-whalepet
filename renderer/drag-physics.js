@@ -1747,6 +1747,27 @@
       } catch (e) {}
     applyOverride()
     persistPosition()        // 首次接管也把当前位置落盘
+    // ⚠️⚠️ **主动告诉主进程"我就绪了"，让它把窗口摆到工作区右下角。**
+    //    为什么由渲染端开口：主进程"推"的时机没法保证 ——
+    //    这个模块的 start() 要等挂件就绪，比 did-finish-load 晚几百毫秒到几秒，
+    //    之前用 invoke 和定时推送都栽在这上面。渲染端先开口就没有时序问题。
+    //    主进程用 workArea + getBounds 精确计算，比渲染端自己量窗口尺寸可靠
+    //    （渲染端能读到的 innerWidth=903 / clientWidth=900 / 真实外框=901 三个值都不一样）。
+    try {
+      if (api.onPosSynced) {
+        api.onPosSynced(function (p) {
+          try {
+            if (!p || typeof p.x !== 'number' || typeof p.y !== 'number') return
+            physPos = [p.x, p.y]
+            // 清掉"上次发过的位置"，否则 applyOverride 会以为没变而不下发
+            lastSentX = null; lastSentY = null
+            applyOverride()
+            log('已同步主进程摆好的位置: physPos=[' + physPos[0] + ',' + physPos[1] + ']')
+          } catch (e) {}
+        })
+      }
+      if (api.rendererReady) api.rendererReady()
+    } catch (e) {}
     // 注册顺序很重要：必须是 document + capture，且早于挂件
     document.addEventListener('pointerdown', onPointerDown, true)
     // ⚠️ **右键的兜底通道。** 有些 Electron 版本经 setIgnoreMouseEvents 转发过来的

@@ -539,30 +539,6 @@ function makePetWindow(port, primary) {
   w.webContents.on('did-finish-load', () => {
     try { sendSpawnSpot(w) } catch (err) {}
     broadcastPetCount()
-    // ⚠️⚠️ **把窗口的真实尺寸推给渲染端 —— 要持续推，不能只推一两次。**
-    //    渲染端的 window.innerWidth 在透明无边框窗口上不准（实测 903，
-    //    而窗口真实是 901）—— 启动落位要减掉窗口尺寸，用错就偏。
-    //
-    //    为什么持续推：渲染端**注册监听**是在 drag-physics 的 start() 里，
-    //    而那个要等挂件就绪（实测 did-finish-load 之后还要几百毫秒到几秒）。
-    //    只推一两次会全部落在监听注册之前 → 消息丢掉 → 什么也没发生
-    //    （上一版 60ms/1200ms 两次就是这么丢的，日志里连"修正"都没有）。
-    //    这里每 500ms 推一次、共 20 次（10 秒）—— 覆盖任何启动速度。
-    //    渲染端有 didFixStart 锁，只会应用一次，多推无害。
-    //    主进程这边也记一笔，好区分"没推"和"没收到"。
-    let pushed = 0
-    const sizeTimer = setInterval(() => {
-      pushed++
-      try {
-        if (w.isDestroyed() || pushed > 20) { clearInterval(sizeTimer); return }
-        const b = w.getBounds()
-        w.webContents.send('pet:win-size', { width: b.width, height: b.height })
-        if (pushed === 1 || pushed === 20) {
-          log('推送窗口尺寸 #' + pushed + ' → ' + b.width + 'x' + b.height)
-        }
-      } catch (err) {}
-    }, 500)
-    w.on('closed', () => { try { clearInterval(sizeTimer) } catch (err) {} })
   })
 
   // 页面从本地服务加载（同源），而不是 file://
@@ -771,6 +747,37 @@ ipcMain.handle('pet:win-size', (e) => {
     const b = w.getBounds()
     return { width: b.width, height: b.height }
   } catch (err) { return null }
+})
+
+// ⚠️⚠️ **让主进程直接把窗口摆到工作区右下角。**
+//
+//    为什么不让渲染端算：渲染端要拿"窗口尺寸"来算立绘在窗口内的偏移，
+//    而它在浏览器里能读到的三个宽度**各不相同**（实测）：
+//        window.innerWidth              = 903   （含边框）
+//        getBounds().width              = 901   （窗口外框）
+//        documentElement.clientWidth    = 900   （内容区）
+//    用错任何一个都会偏 1~3px，而且换机器/换缩放还可能变。
+//
+//    主进程这边是精确的：workArea 给出工作区、getBounds 给出窗口真实外框，
+//    两者相减就是"窗口左上角应该在哪"。
+//
+//    时机：等渲染端**主动说它就绪了**（pet:renderer-ready）再摆 ——
+//    之前试过 invoke / 定时推送，都栽在"渲染端注册监听的时机
+//    比 did-finish-load 晚"上。让渲染端主动开口，时序问题自然消失。
+ipcMain.on('pet:renderer-ready', (e) => {
+  try {
+    const w = BrowserWindow.fromWebContents(e.sender)
+    if (!w || w.isDestroyed()) return
+    const wa = screen.getPrimaryDisplay().workArea
+    const b = w.getBounds()
+    const x = wa.x + wa.width - b.width
+    const y = wa.y + wa.height - b.height
+    log('主进程摆窗口到工作区右下角: workArea=' + JSON.stringify(wa) +
+        ' 窗口=' + b.width + 'x' + b.height + ' → [' + x + ',' + y + ']')
+    w.setBounds({ x, y, width: b.width, height: b.height })
+    // 把摆好的位置告诉渲染端，让它的 physPos 跟窗口保持一致
+    try { w.webContents.send('pet:pos-synced', { x, y }) } catch (err) {}
+  } catch (err) {}
 })
 
 ipcMain.on('pet:move-window', (e, p) => {
