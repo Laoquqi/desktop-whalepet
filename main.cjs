@@ -178,6 +178,24 @@ function setPetsYieldForFullscreen(hidden) {
         try { w.webContents.setBackgroundThrottling(false) } catch (err) {}
         w.showInactive()                       // 不抢焦点：视频刚退出全屏，别把前台抢过来
         w.__fsWasVisible = false
+        // ⚠️⚠️ **让路恢复后必须验一下渲染进程真的醒了。**
+        //    让路时上面那句 setBackgroundThrottling(true) 会把它节流"睡着"，
+        //    而 showInactive() + 关掉节流**并不保证**它能醒来 ——
+        //    实测症状：窗口和画面都还在，但**点什么都没反应**（用户报的"卡死"），
+        //    而且既没崩溃也没退出，render-process-gone / unresponsive 都指望不上。
+        //    所以这里主动探一次：executeJavaScript 必须渲染进程真的跑起来才会
+        //    resolve，2 秒回不来就重载自愈。用 webContents.reload()，
+        //    不是 location.reload()（后者在本应用里会卡在永不提交的导航上）。
+        try {
+          const probe = Promise.race([
+            w.webContents.executeJavaScript('1'),
+            new Promise((resolve, reject) => setTimeout(() => reject(new Error('timeout')), 2000)),
+          ])
+          probe.catch(() => {
+            log('让路恢复后渲染进程没响应 → 重载自愈')
+            try { if (!w.isDestroyed() && !quitting) w.reload() } catch (err) {}
+          })
+        } catch (err) {}
       }
     } catch (err) {}
   }
@@ -446,6 +464,19 @@ function makePetWindow(port, primary) {
   w.webContents.on('render-process-gone', (e, details) => {
     log('渲染进程异常退出', JSON.stringify(details))
     if (!quitting) setTimeout(() => { try { w.reload() } catch (err) {} }, 1500)
+  })
+  // ⚠️⚠️ **"无响应"必须单独接。** 上面那条只管"进程没了"，
+  //    而**卡住不动的进程既没崩也没退出** —— render-process-gone 不会触发，
+  //    表现就是用户说的"**怎么点都没反应**"，而且**永远不会自愈**。
+  //    实测触发路径：全屏视频 → 让路时 setBackgroundThrottling(true) 把渲染进程
+  //    节流睡着 → 退出全屏 showInactive() + setBackgroundThrottling(false) 之后
+  //    它没醒过来 → 窗口还在、画面还在，但事件全都不响应。
+  //    Electron 对这种情况会发 'unresponsive'，这里 reload 一次即可自愈。
+  //    （用 webContents.reload()，不是 location.reload() —— 后者在本应用里
+  //      会发起一次永远不提交的导航，反而更死。见下方 pet:reload 那段注释。）
+  w.webContents.on('unresponsive', () => {
+    log('渲染进程无响应 → 重载自愈')
+    if (!quitting) { try { w.reload() } catch (err) {} }
   })
   w.webContents.on('did-fail-load', (e, code, desc) => log('页面加载失败', code, desc))
 

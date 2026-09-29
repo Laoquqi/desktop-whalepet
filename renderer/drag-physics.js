@@ -346,6 +346,19 @@
       // 只保留"掐掉 left/top 过渡"这一条 —— 位置本身由行内 !important 负责，
       // 不在这里写 left/top，避免多一层样式来源。
       '.dshwv-root.dshpet-phys{transition:transform .3s ease !important}',
+      // ⚠️⚠️ **小窗架构：根的 left/top 必须彻底失效（钉死在窗口右下）。**
+      //    挂件自己会写行内 left/top —— 它是按**工作区**算的，比窗口内的
+      //    钉住位正好差一个任务栏高度（实测 477 vs 525，差 48px）。
+      //    写进去之后 styleObs 再撤掉 —— **每来一轮就是一次可见位移**，
+      //    用户看到的就是"打开时瞬移几下"（日志里
+      //    「挂件把根写到了(525px,477px) → 撤掉行内值」反复出现）。
+      //
+      //    这里直接用 !important 让那个行内值**根本不生效**：
+      //    样式表里的 !important 声明**优先级高于没有 !important 的行内声明**。
+      //    于是挂件照写它的，视觉上纹丝不动，styleObs 也就不用撤了 ——
+      //    从"反复打架"变成"根本打不起来"。
+      //    基础样式 right:0;bottom:0 会把根钉在窗口右下，正是我们要的位置。
+      '.dshwv-root{left:auto !important;top:auto !important}',
       '.dshpet-phys-row{display:flex;align-items:center;gap:6px;margin:5px 0;color:#203170;font-size:12px;white-space:nowrap}',
       '.dshpet-phys-row input{width:16px;height:16px;accent-color:#203170;cursor:pointer;flex:0 0 auto}',
       '.dshpet-phys-hint{color:#9fb0d9;font-size:11px}',
