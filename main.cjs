@@ -193,6 +193,15 @@ function setPetsYieldForFullscreen(hidden) {
       } else if (w.__fsWasVisible) {
         try { w.webContents.setBackgroundThrottling(false) } catch (err) {}
         w.showInactive()                       // 不抢焦点：视频刚退出全屏，别把前台抢过来
+        // ⚠️⚠️ **hide()/show() 之后必须重新断言置顶。**
+        //    窗口创建时设过 setAlwaysOnTop(true,'screen-saver')，但那只在**建窗时**
+        //    生效一次 —— Windows 在窗口 hide 再 show 之后会**丢掉置顶状态**。
+        //    后果很隐蔽：窗口能收到 mousemove（所以日志里"事件通道正常"），
+        //    但它已经不在最上层了 —— 点击被上层窗口吃掉，用户感觉"一点反应都没有"。
+        //    （日志佐证：最终状态明明是"接管（可点）"，却还是点不了 ——
+        //      说明问题不在穿透开关，而在窗口的 z-order。）
+        try { w.setAlwaysOnTop(true, 'screen-saver') } catch (err) {}
+        try { w.moveTop() } catch (err) {}
         w.__fsWasVisible = false
         // ⚠️⚠️ **让路恢复后必须强制重新评估鼠标穿透。**
         //    主进程和渲染端**各有一个状态缓存**：
