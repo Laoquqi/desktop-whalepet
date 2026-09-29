@@ -573,8 +573,11 @@
   function releaseOverride() {
     if (!root) return
     root.classList.remove('dshpet-phys')
-    root.style.removeProperty('left')
-    root.style.removeProperty('top')
+    // ⚠️ 这里**不能** removeProperty —— 小窗架构下根必须一直钉在窗口右下。
+    //    撤掉之后挂件会立刻写 left:0（它把归零当"回基础位"），
+    //    根就闪到窗口左上，再被 clampRendered 拉回来 = 一次可见瞬移。
+    //    所以改成"重新钉一遍"。
+    restorePinnedRoot()
   }
 
   // 读她现在在哪（首次接管时用）：小窗口架构下 = **窗口**在屏幕上的位置
@@ -1658,13 +1661,33 @@
     restorePinnedRoot()
     log('根位置被写偏(' + Math.round(r.left) + ',' + Math.round(r.top) + ') → 已还原到钉住位')
   }
-  function restorePinnedRoot() {
-    if (!root) return
-    root.style.removeProperty('left')
-    root.style.removeProperty('top')
-    root.style.removeProperty('right')
-    root.style.removeProperty('bottom')
-  }
+    function restorePinnedRoot() {
+      if (!root) return
+      // ⚠️⚠️ **不能只 removeProperty —— 必须带 !important 主动写死。**
+      //
+      //    挂件会**主动写 `root.style.left = '0'; root.style.top = '0'`**
+      //    （它把"归零"当作"回到基础位"）：
+      //      · 全屏架构下基础位 = 整屏左上 → left:0/top:0 是**对的**；
+      //      · 小窗架构下基础位 = **窗口右下**（right:0;bottom:0）→
+      //        left:0 会把它甩到**窗口左上**，也就是 (0,0)。
+      //
+      //    只 removeProperty 的话：撤掉 → 基础位生效(525,525) → 挂件马上又写 0
+      //    → clampRendered 100ms 后再拉回来 → **两个写入者无限打架**，
+      //    表现就是用户报的"打开时瞬移几下"（日志里这两句交替刷屏：
+      //    「挂件把根写到了(525px,477px) → 撤掉行内值」/
+      //      「根位置被写偏(0,0) → 已还原到钉住位」）。
+      //
+      //    带 !important 写死就压得住了：挂件写的是**普通**行内赋值，
+      //    而**行内 !important** 是整条优先级链里最高的。
+      //    （这也解释了为什么之前那条样式表 `.dshwv-root{left:auto !important}`
+      //      没用 —— 它压不住**行内**赋值；必须写成行内 !important。）
+      try {
+        root.style.setProperty('left', 'auto', 'important')
+        root.style.setProperty('top', 'auto', 'important')
+        root.style.setProperty('right', '0', 'important')
+        root.style.setProperty('bottom', '0', 'important')
+      } catch (e) {}
+    }
 
   function start() {
     root = document.querySelector('.dshwv-root')
@@ -1675,6 +1698,11 @@
     //    盒子左上方多出约 152px 空区 —— 按盒子夹会让立绘永远够不到屏幕顶部/左侧
     //    （用户报的"上面有一整块地方拖不上去"）。接管之后改按**立绘**夹取，死区消失。
     if (!syncFromDom()) return false
+    // ⚠️⚠️ **开机先把根钉死。** 挂件初始化时会主动写 `left:0;top:0`
+    //    （它把归零当"回基础位"，全屏架构下那是对的、小窗架构下是错的），
+    //    不先钉住的话，用户会在启动瞬间看到根闪到窗口左上再被拉回来 ——
+    //    这正是"打开时瞬移几下"的第一下。带 !important 写死就压得住了。
+    restorePinnedRoot()
     // 兜底：启动时把她摆到桌面右下角（**立绘**的右下角贴住屏幕右下角）。
     // shell.js 已经在加载挂件**之前**清掉了 dshw-pos，正常情况下挂件本来就落在右下角；
     // 这里再按"立绘对齐"算一次 —— 因为挂件是按**盒子**对齐的，和我们的夹取口径差 152px。
@@ -1748,19 +1776,24 @@
         if (!root) return
         var curL = root.style.getPropertyValue('left')
         var curT = root.style.getPropertyValue('top')
-        // ⚠️ 小窗口架构：根在窗口内钉死在基础位（right:0;bottom:0）。
-        //    挂件自己的 express 写的就是这个位置（它的 state 恒等于钉住位），
-        //    正常情况**不需要任何改回**；只有它写疯（left/top 出现且偏离
-        //    钉住位 >2px）时才撤掉行内值，让基础位接管。
+        // ⚠️⚠️ 小窗架构：根在窗口内钉死在基础位（right:0;bottom:0），
+        //    而 restorePinnedRoot() 是**带 !important 主动写死**的
+        //    （left/top:auto + right/bottom:0）—— 那才是我们要的状态，直接放行。
+        //    不然这里会把我们刚写死的 !important 值撤掉，挂件再写 left:0，
+        //    clampRendered 再拉回来 —— 三个写入者打架，就是用户看到的瞬移。
+        var curPrio = root.style.getPropertyPriority('left')
+        if (curL === 'auto' && curPrio === 'important') return
         var pinL = (window.innerWidth - root.offsetWidth) + 'px'
         var pinT = (window.innerHeight - root.offsetHeight) + 'px'
         var sane = !curL || (Math.abs(parseFloat(curL) - parseFloat(pinL)) <= 2 &&
                              Math.abs(parseFloat(curT) - parseFloat(pinT)) <= 2)
         if (sane) return
         lastWidgetStyleWriteAt = Date.now()
-        log('挂件把根写到了(' + curL + ',' + curT + ') → 撤掉行内值，回钉住位')
-        root.style.removeProperty('left')
-        root.style.removeProperty('top')
+        log('挂件把根写到了(' + curL + ',' + curT + ') → 恢复钉住位')
+        // ⚠️ 用 restorePinnedRoot()，**不是** removeProperty ——
+        //    挂件写的是 left:0/top:0（普通行内），removeProperty 之后它马上又写，
+        //    两边无限打架。带 !important 写死才压得住。
+        restorePinnedRoot()
       })
       styleObs.observe(root, { attributes: true, attributeFilter: ['style'] })
     } catch (err) {}
