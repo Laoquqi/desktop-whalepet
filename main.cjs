@@ -172,47 +172,57 @@ function setPetsYieldForFullscreen(hidden) {
       if (hidden) {
         w.__fsWasVisible = w.isVisible()
         if (w.isVisible()) {
-          // ⚠️ **先淡出、再隐藏。** 直接 hide() 是"啪一下没了"，
-          //    用户要求全屏视频让路时要有淡出动画。
-          //    动画由渲染端做（主进程只负责延迟 hide）—— 因为窗口一 hide
-          //    渲染就停了，淡出必须在 hide 之前跑完。
-          //    260ms ≈ 渲染端那条 0.22s transition + 一点余量。
+          // ⚠️⚠️⚠️ **让路不再用 hide()，改成"移出屏幕 + 透明度 0"。**
+          //
+          //    查了八轮才定位到：窗口建的时候调过 setFocusable(false)
+          //    （为了修"点桌宠抢焦点导致视频/直播暂停"），它在 Windows 上给窗口
+          //    加了 WS_EX_NOACTIVATE。而**这类窗口在 hide() 再 show() 之后，
+          //    鼠标命中测试会失效** —— mousemove 照样能到，但点击送不进窗口，
+          //    表现就是"桌宠和桌宠菜单都点不了，一点反应都没有"。
+          //
+          //    重新断言窗口标志（上一版的做法）只是**治标**：只要还走
+          //    hide/show，就可能再次踩到同一个系统行为。所以这一版直接
+          //    **不走 hide/show** —— 把窗口挪到屏幕外 + 整窗透明，
+          //    视觉上等于消失了（让路的目的达到），但窗口状态**从没被打断过**，
+          //    自然也就不会有"醒来之后点不了"的问题。
+          //
+          //    顺序：先淡出（渲染端做动画），再挪走 + 透明。
+          //    260ms ≈ 渲染端那条 0.22s transition + 余量。
           try { w.webContents.send('pet:fade-out') } catch (err) {}
+          w.__fsYielded = true                    // 让路中：pet:move-window 要忽略
+          w.__fsSavedBounds = w.getBounds()
           setTimeout(() => {
-            try { if (!w.isDestroyed() && w.isVisible()) w.hide() } catch (err) {}
+            try {
+              if (w.isDestroyed() || !w.__fsYielded) return
+              const bb = displayBounds()
+              // 挪到工作区**左边外侧**，彻底离开可视区域
+              w.setBounds({
+                x: bb.x - (w.__fsSavedBounds ? w.__fsSavedBounds.width : 900) - 100,
+                y: bb.y,
+                width: w.__fsSavedBounds ? w.__fsSavedBounds.width : 900,
+                height: w.__fsSavedBounds ? w.__fsSavedBounds.height : 900,
+              })
+              w.setOpacity(0)
+            } catch (err) {}
           }, 260)
         }
         // ⚠️⚠️ **不要在这里 setBackgroundThrottling(true)。**
-        //    原来藏着的时候会打开节流省 CPU，但它留下了一个很深的坑：
         //    被节流的渲染进程**不跑 requestAnimationFrame 回调**，
-        //    而渲染端的"按指针位置决定鼠标穿透"正好是用 rAF 做的 ——
-        //    于是恢复后 rAF 可能一直不被调度 → setInteractive 永不执行 →
-        //    窗口永远停在穿透 → 用户说的"一点反应都没有"。
-        //    隐藏窗口本来就会被系统降频，这个节流省不了多少，坑却很深，去掉。
-        //    （渲染端也已经把 rAF 换成 setTimeout，双保险。）
+        //    而渲染端的穿透判定原来正好是用 rAF 做的 —— 恢复后 rAF 可能一直
+        //    不被调度。隐藏窗口本来就会被系统降频，这个节流省不了多少，去掉。
       } else if (w.__fsWasVisible) {
         try { w.webContents.setBackgroundThrottling(false) } catch (err) {}
-        w.showInactive()                       // 不抢焦点：视频刚退出全屏，别把前台抢过来
-        // ⚠️⚠️⚠️ **恢复后必须把窗口的所有标志重新断言一遍。**
-        //
-        //    这里查了七轮才找到的真凶：窗口创建时调过 `setFocusable(false)`
-        //    （那是为了修"点桌宠抢焦点导致视频/直播暂停"），它在 Windows 上给窗口
-        //    加了 **WS_EX_NOACTIVATE**。而这类窗口在 **hide() 再 show() 之后，
-        //    鼠标命中测试会失效** —— 但 **mousemove 照样能到渲染端**。
-        //
-        //    这完美解释了之前所有矛盾的现象：
-        //      · 日志里"事件通道正常"（mousemove 到了）
-        //      · 穿透状态最终是"接管（可点）"（状态是对的）
-        //      · **可就是点不了**（点击送不进窗口）—— 连桌宠菜单也点不了
-        //
-        //    当时那句注释写的是"鼠标事件与焦点无关，照常收（命中测试基于窗口层级）"
-        //    —— **这个假设在 hide/show 之后不成立**。
-        //
-        //    所以这里把建窗时设过的每一项都重新做一遍。
+        // ⚠️ **恢复：把窗口挪回原位 + 透明度还原**（这一版没走过 hide，
+        //    所以不需要 showInactive，也就不存在"醒来之后点不了"的问题）。
+        w.__fsYielded = false
+        try {
+          if (w.__fsSavedBounds) w.setBounds(w.__fsSavedBounds)
+          w.setOpacity(1)
+        } catch (err) {}
+        // 再把建窗时设过的标志断言一遍（保险：万一系统在挪动过程中动了样式）
         try { w.setFocusable(false) } catch (err) {}
         try { w.setIgnoreMouseEvents(false) } catch (err) {}
         try { w.setAlwaysOnTop(true, 'screen-saver') } catch (err) {}
-        try { w.setVisibleOnAllWorkspaces(true, { visibleOnFullScreen: true }) } catch (err) {}
         try { w.moveTop() } catch (err) {}
         // 再延后一拍重做一次：show 是异步落地的，紧接着调可能被系统的
         // "显示过程"覆盖掉。120ms 足够，用户感知不到。
@@ -729,6 +739,10 @@ let rectSeq = 0
 ipcMain.on('pet:move-window', (e, p) => {
   const w = BrowserWindow.fromWebContents(e.sender)
   if (!w || w.isDestroyed() || !p) return
+  // ⚠️ **让路中一律忽略。** 让路时窗口被挪到屏幕外，而渲染端的物理还在跑，
+  //    它会不断发 moveWindow 想把自己挪回原位 —— 不挡住的话让路就白做了
+  //    （桌宠会自己跑回屏幕上，盖在视频上）。
+  if (w.__fsYielded) return
   const x = Number(p.x), y = Number(p.y)
   if (!isFinite(x) || !isFinite(y)) return
   const size = w.__petWinSize || { width: w.getBounds().width, height: w.getBounds().height }
