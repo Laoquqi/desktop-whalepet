@@ -1720,6 +1720,16 @@
         sc0.x + sc0.w - window.innerWidth,
         sc0.y + sc0.h - window.innerHeight,
       ]
+      // —— 诊断：启动落位的真实数字 ——
+      // 用户报"还是向左上偏一点"，这里把参与计算的每一项都打出来，
+      // 一眼就能看出是 availWidth 不对、还是 innerWidth 不对。
+      try {
+        log('启动落位: physPos=[' + physPos[0] + ',' + physPos[1] + ']' +
+          ' avail=' + sc0.w + 'x' + sc0.h + '@(' + sc0.x + ',' + sc0.y + ')' +
+          ' inner=' + window.innerWidth + 'x' + window.innerHeight +
+          ' screen=' + (window.screen ? (window.screen.width + 'x' + window.screen.height) : '?') +
+          ' dpr=' + (window.devicePixelRatio || 1))
+      } catch (e) {}
     applyOverride()
     persistPosition()        // 首次接管也把当前位置落盘
     // 注册顺序很重要：必须是 document + capture，且早于挂件

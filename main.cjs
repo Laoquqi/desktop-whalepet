@@ -1247,29 +1247,12 @@ function buildTray() {
         checked: false,
         click: keepOpen((item) => win && win.webContents.send('pet:force-passthrough', !!item.checked)),
       },
-      {
-        // ⚠️⚠️ **这是给"点不了"准备的诊断开关，也是逃生口。**
-        //    窗口建的时候调过 setFocusable(false)（为了修"点桌宠抢焦点导致视频暂停"），
-        //    它在 Windows 上给窗口加了 WS_EX_NOACTIVATE。
-        //    我怀疑这类窗口在某些情况下**收不到点击**（mousemove 却能收到）——
-        //    勾上这个就是恢复成普通可激活窗口，点一下立刻能验证。
-        //    代价：点桌宠会抢焦点，部分播放器可能暂停/闪白（就是当初要修的那个问题）。
-        label: '桌宠可点模式（关掉"不可激活"，用于排查点不了）',
-        type: 'checkbox',
-        checked: petFocusable,
-        click: keepOpen((item) => {
-          petFocusable = !!item.checked
-          for (const w of pets) {
-            try {
-              if (w.isDestroyed()) continue
-              // 来回切一次，确保 Windows 真的重建窗口样式
-              w.setFocusable(true)
-              w.setFocusable(petFocusable)
-            } catch (err) {}
-          }
-          log('不可激活 → ' + (petFocusable ? '关（可点模式已开）' : '开'))
-        }),
-      },
+      // ⚠️ 「桌宠可点模式」开关已删除（2026-09-29）。
+      //    它是排查"全屏视频进出后点不了"时加的临时诊断项，问题已解决
+      //    （根因是让路走了 hide/show，改成 setOpacity(0) 后不再复现；
+      //      实测无论开关与否都能点，说明与 setFocusable 无关）。
+      //    petFocusable 变量保留（默认 false = 不可激活，避免点桌宠抢焦点
+      //    把视频弄暂停），只是不再暴露成开关。
       {
         // 与挂件 ☰ 菜单里的「拖动物理」是同一个值（都在 localStorage 里）
         label: '拖动物理（弹簧跟随 + 松手抛出）',
