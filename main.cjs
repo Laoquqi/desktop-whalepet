@@ -379,6 +379,11 @@ function makePetWindow(port, primary) {
     },
   })
   w.__petWinSize = { width: PET_WIN_W, height: PET_WIN_H }
+  // ⚠️ **版本指纹**：这行只在「小窗架构」里存在。
+  //    排查"改了没用"时，先看日志有没有这行 —— 没有就说明跑的不是这个包。
+  //    （踩过的坑：小窗版和全屏版的 exe 名字一样、大小也一样，
+  //      靠日志文案才分得出来；而两句关键日志只在其中一版存在。）
+  log('★ 架构指纹：小窗版（窗口 ' + PET_WIN_W + '×' + PET_WIN_H + '，跟随桌宠移动）')
 
   w.setAlwaysOnTop(true, 'screen-saver')
   // ⚠️ **不可激活窗口**：点击桌宠不抢焦点。看视频/直播时点她，视频窗口
