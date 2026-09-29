@@ -210,6 +210,23 @@
     })
   }
 
+  // 全屏让路：主进程会在 260ms 后 hide 窗口，这里先把画面淡出。
+  // ⚠️ 必须在 hide **之前** 跑完 —— 窗口一隐藏，渲染就停了，动画不会再推进。
+  //    淡出结束后立刻把 opacity 复位（窗口已经不可见了，复位不会被看到），
+  //    这样下次恢复显示时不会残留一个透明的画面。
+  if (api.onFadeOut) {
+    api.onFadeOut(function () {
+      try {
+        var el = document.documentElement
+        el.style.transition = 'opacity .22s ease'
+        el.style.opacity = '0'
+        setTimeout(function () {
+          try { el.style.opacity = '1' } catch (e) {}
+        }, 400)
+      } catch (e) {}
+    })
+  }
+
   // 兜底：面板开合、她被拖动之后，指针没动但状态该变 —— 每 1 秒用最后坐标复核一次
   setInterval(function () {
     if (lastX < 0) return

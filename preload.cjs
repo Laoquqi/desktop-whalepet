@@ -88,6 +88,8 @@ contextBridge.exposeInMainWorld('petApi', {
   // 值没变就不重发 —— 而窗口 hide/show 之后实际状态可能已经不一致，
   // 两边都以为"没变"就永远卡住（用户报的"全屏视频进出后点不了"）。
   onReevalInteractive: (fn) => ipcRenderer.on('pet:reeval-interactive', () => { try { fn() } catch (err) {} }),
+  // 全屏让路：主进程要在 260ms 后 hide，先让渲染端把画面淡出
+  onFadeOut: (fn) => ipcRenderer.on('pet:fade-out', () => { try { fn() } catch (err) {} }),
   // 主进程碰撞世界下发的冲量 + 位置分离（20Hz）
   onImpulse: (fn) => ipcRenderer.on('pet:impulse', (e, d) => { try { fn(d) } catch (err) {} }),
   // 桌宠互撞的冲量转发：撞人的那只把自己该给同伴的份额发过来，

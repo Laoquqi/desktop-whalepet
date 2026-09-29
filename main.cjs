@@ -171,7 +171,17 @@ function setPetsYieldForFullscreen(hidden) {
       if (w.isDestroyed()) continue
       if (hidden) {
         w.__fsWasVisible = w.isVisible()
-        if (w.isVisible()) w.hide()
+        if (w.isVisible()) {
+          // ⚠️ **先淡出、再隐藏。** 直接 hide() 是"啪一下没了"，
+          //    用户要求全屏视频让路时要有淡出动画。
+          //    动画由渲染端做（主进程只负责延迟 hide）—— 因为窗口一 hide
+          //    渲染就停了，淡出必须在 hide 之前跑完。
+          //    260ms ≈ 渲染端那条 0.22s transition + 一点余量。
+          try { w.webContents.send('pet:fade-out') } catch (err) {}
+          setTimeout(() => {
+            try { if (!w.isDestroyed() && w.isVisible()) w.hide() } catch (err) {}
+          }, 260)
+        }
         // 藏着的时候定时器没必要全速跑：打开节流（恢复时关掉）
         try { w.webContents.setBackgroundThrottling(true) } catch (err) {}
       } else if (w.__fsWasVisible) {
@@ -188,6 +198,16 @@ function setPetsYieldForFullscreen(hidden) {
         //    窗口永远停在"点一下直接穿到桌面"的状态 = 用户报的"点不了"。
         //    所以这里：① 清掉主进程的缓存 ② 通知渲染端也清掉并重新评估。
         interactiveOf.delete(w)
+        // ⚠️⚠️ **光清缓存还不够 —— 必须先"破死锁"。**
+        //    如果窗口停在"穿透"状态、而 setIgnoreMouseEvents(true,{forward:true})
+        //    的转发又恰好没生效，渲染端就**永远收不到 mousemove** →
+        //    它那个"按指针位置判定要不要接管"的逻辑永远没机会跑 →
+        //    窗口永远是穿透的 = 用户报的"一点反应都没有"。
+        //    所以这里**强制接管一次**（哪怕只是一瞬间）：
+        //    下一次鼠标移动一定能到渲染端，它就能按真实指针位置重新判定，
+        //    该穿透再自己切回穿透。**破掉死锁，把控制权还给渲染端。**
+        try { w.setIgnoreMouseEvents(false) } catch (err) {}
+        interactiveOf.set(w, true)
         try { w.webContents.send('pet:reeval-interactive') } catch (err) {}
         // ⚠️ **让路恢复后必须验一下渲染进程真的醒了。**
         //    让路时上面那句 setBackgroundThrottling(true) 会把它节流"睡着"，
@@ -1119,30 +1139,41 @@ function trayIcon() {
 function buildTray() {
   try {
     tray = new Tray(trayIcon())
+    // ⚠️⚠️ **原生托盘菜单点任何一项都会自动关闭** —— 这是 Electron/系统的行为，
+    //    没有开关可以关掉它。用户要求"点按钮不要直接退出菜单"（想连着点几项，
+    //    比如先开关全屏让路、再开关拖动物理）。
+    //    折中方案：把菜单存下来，**非退出项**点完后**立刻重新弹出**。
+    //    代价是极短的重绘闪烁；真正无闪烁要自绘一个菜单窗口，那是另一个专项。
+    //    「退出」不加这个包装 —— 点了就该退，不能又弹回来。
+    let trayMenu = null
+    const keepOpen = (fn) => (...a) => {
+      try { fn(...a) } catch (err) { log('托盘菜单项出错', err && err.message) }
+      setTimeout(() => { try { if (trayMenu) tray.popUpContextMenu(trayMenu) } catch (err) {} }, 60)
+    }
     const menu = Menu.buildFromTemplate([
-      { label: '显示 / 隐藏', click: () => { if (!win) return; win.isVisible() ? win.hide() : win.showInactive() } },
+      { label: '显示 / 隐藏', click: keepOpen(() => { if (!win) return; win.isVisible() ? win.hide() : win.showInactive() }) },
       { type: 'separator' },
-      { label: '设置 DeepSeek API Key…', click: openSettings },
-      { label: '回到右下角', click: () => win && win.webContents.send('pet:reset-pos') },
-      { label: '重新加载挂件', click: () => win && win.webContents.reload() },
+      { label: '设置 DeepSeek API Key…', click: keepOpen(openSettings) },
+      { label: '回到右下角', click: keepOpen(() => win && win.webContents.send('pet:reset-pos')) },
+      { label: '重新加载挂件', click: keepOpen(() => win && win.webContents.reload()) },
       {
         label: '强制鼠标穿透（她点不动时先关掉）',
         type: 'checkbox',
         checked: false,
-        click: (item) => win && win.webContents.send('pet:force-passthrough', !!item.checked),
+        click: keepOpen((item) => win && win.webContents.send('pet:force-passthrough', !!item.checked)),
       },
       {
         // 与挂件 ☰ 菜单里的「拖动物理」是同一个值（都在 localStorage 里）
         label: '拖动物理（弹簧跟随 + 松手抛出）',
         type: 'checkbox',
         checked: true,
-        click: (item) => win && win.webContents.send('pet:drag-physics', !!item.checked),
+        click: keepOpen((item) => win && win.webContents.send('pet:drag-physics', !!item.checked)),
       },
       {
         label: '全屏视频时自动让路（隐藏桌宠，不挡视频）',
         type: 'checkbox',
         checked: fsYieldEnabled,
-        click: (item) => {
+        click: keepOpen((item) => {
           fsYieldEnabled = !!item.checked
           saveFsYieldPref()
           if (fsYieldEnabled && !fsWatch && fsWatchModRef) {
@@ -1155,15 +1186,17 @@ function buildTray() {
           if (fsWatch) fsWatch.setEnabled(fsYieldEnabled)
           if (!fsYieldEnabled) setPetsYieldForFullscreen(false)   // 关掉时把藏着的放回来
           log('全屏让路开关 → ' + fsYieldEnabled)
-        },
+        }),
       },
       { type: 'separator' },
-      { label: '打开数据目录', click: () => shell.openPath(DATA_DIR) },
-      { label: '打开日志', click: () => shell.openPath(LOG_FILE) },
-      { label: '开发者工具', click: () => win && win.webContents.openDevTools({ mode: 'detach' }) },
+      { label: '打开数据目录', click: keepOpen(() => shell.openPath(DATA_DIR)) },
+      { label: '打开日志', click: keepOpen(() => shell.openPath(LOG_FILE)) },
+      { label: '开发者工具', click: keepOpen(() => win && win.webContents.openDevTools({ mode: 'detach' })) },
       { type: 'separator' },
+      // ⚠️ 唯一**不**重新弹出的项：点了就是要退出
       { label: '退出', click: () => { quitting = true; app.quit() } },
     ])
+    trayMenu = menu
     tray.setToolTip('大肥鱼桌宠')
     tray.setContextMenu(menu)
     tray.on('double-click', () => { if (win) win.isVisible() ? win.hide() : win.showInactive() })
