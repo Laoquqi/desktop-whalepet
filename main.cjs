@@ -178,7 +178,18 @@ function setPetsYieldForFullscreen(hidden) {
         try { w.webContents.setBackgroundThrottling(false) } catch (err) {}
         w.showInactive()                       // 不抢焦点：视频刚退出全屏，别把前台抢过来
         w.__fsWasVisible = false
-        // ⚠️⚠️ **让路恢复后必须验一下渲染进程真的醒了。**
+        // ⚠️⚠️ **让路恢复后必须强制重新评估鼠标穿透。**
+        //    主进程和渲染端**各有一个状态缓存**：
+        //        main.cjs:      if (interactiveOf.get(w) === on) return
+        //        shell.js:      if (on === lastInteractive) return
+        //    两边都是"值没变就跳过"。而 hide()/showInactive() 之后
+        //    Electron 那边窗口的**实际**穿透状态可能已经复位，
+        //    两个缓存却还认为"没变" → **谁都不重新下发** →
+        //    窗口永远停在"点一下直接穿到桌面"的状态 = 用户报的"点不了"。
+        //    所以这里：① 清掉主进程的缓存 ② 通知渲染端也清掉并重新评估。
+        interactiveOf.delete(w)
+        try { w.webContents.send('pet:reeval-interactive') } catch (err) {}
+        // ⚠️ **让路恢复后必须验一下渲染进程真的醒了。**
         //    让路时上面那句 setBackgroundThrottling(true) 会把它节流"睡着"，
         //    而 showInactive() + 关掉节流**并不保证**它能醒来 ——
         //    实测症状：窗口和画面都还在，但**点什么都没反应**（用户报的"卡死"），

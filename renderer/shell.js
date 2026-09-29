@@ -191,6 +191,25 @@
   window.addEventListener('mouseleave', function () { setInteractive(false) })
   window.addEventListener('blur', function () { setInteractive(false) })
 
+  // ⚠️⚠️ **主进程要求"重新评估穿透"时必须真的重新下发。**
+  //    背景（用户报"全屏视频进出后点不了"）：
+  //      主进程和渲染端各有一个状态缓存，都是"值没变就跳过"：
+  //        main.cjs:  if (interactiveOf.get(w) === on) return
+  //        这里:      if (on === lastInteractive) return
+  //      而窗口 hide()/showInactive() 之后，Electron 那边**实际**的穿透状态
+  //      可能已经复位，两个缓存却还认为"没变" → 谁都不重新下发 →
+  //      窗口永远停在"点一下直接穿到桌面"= 点不了。
+  //    所以收到主进程的信号后：**清掉本地缓存**，再用最后已知坐标强制重算一次。
+  //    （下面那个 1 秒兜底复核也依赖 lastX/lastY，不够确定 —— 这条是确定性的。）
+  if (api.onReevalInteractive) {
+    api.onReevalInteractive(function () {
+      lastInteractive = null          // 关键：清缓存，否则 setInteractive 会直接 return
+      var want = (lastX >= 0) ? evaluate(lastX, lastY) : false
+      setInteractive(want)
+      log('重新评估鼠标穿透 → ' + (want ? '接管（可点）' : '穿透'))
+    })
+  }
+
   // 兜底：面板开合、她被拖动之后，指针没动但状态该变 —— 每 1 秒用最后坐标复核一次
   setInterval(function () {
     if (lastX < 0) return

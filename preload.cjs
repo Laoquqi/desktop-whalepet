@@ -83,6 +83,11 @@ contextBridge.exposeInMainWorld('petApi', {
   onSetPos: (fn) => ipcRenderer.on('pet:set-pos', (e, d) => { try { fn(d) } catch (err) {} }),
   // 桌宠只数变化（主进程推）—— 只有一只时前端可以完全不做碰撞相关开销
   onPetCount: (fn) => ipcRenderer.on('pet:count-changed', (e, n) => { try { fn(n) } catch (err) {} }),
+  // 让路恢复后主进程要求"重新评估鼠标穿透"。
+  // 必须由主进程主动要求：渲染端自己有个 lastInteractive 缓存，
+  // 值没变就不重发 —— 而窗口 hide/show 之后实际状态可能已经不一致，
+  // 两边都以为"没变"就永远卡住（用户报的"全屏视频进出后点不了"）。
+  onReevalInteractive: (fn) => ipcRenderer.on('pet:reeval-interactive', () => { try { fn() } catch (err) {} }),
   // 主进程碰撞世界下发的冲量 + 位置分离（20Hz）
   onImpulse: (fn) => ipcRenderer.on('pet:impulse', (e, d) => { try { fn(d) } catch (err) {} }),
   // 桌宠互撞的冲量转发：撞人的那只把自己该给同伴的份额发过来，
