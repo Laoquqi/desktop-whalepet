@@ -193,15 +193,43 @@ function setPetsYieldForFullscreen(hidden) {
       } else if (w.__fsWasVisible) {
         try { w.webContents.setBackgroundThrottling(false) } catch (err) {}
         w.showInactive()                       // 不抢焦点：视频刚退出全屏，别把前台抢过来
-        // ⚠️⚠️ **hide()/show() 之后必须重新断言置顶。**
-        //    窗口创建时设过 setAlwaysOnTop(true,'screen-saver')，但那只在**建窗时**
-        //    生效一次 —— Windows 在窗口 hide 再 show 之后会**丢掉置顶状态**。
-        //    后果很隐蔽：窗口能收到 mousemove（所以日志里"事件通道正常"），
-        //    但它已经不在最上层了 —— 点击被上层窗口吃掉，用户感觉"一点反应都没有"。
-        //    （日志佐证：最终状态明明是"接管（可点）"，却还是点不了 ——
-        //      说明问题不在穿透开关，而在窗口的 z-order。）
+        // ⚠️⚠️⚠️ **恢复后必须把窗口的所有标志重新断言一遍。**
+        //
+        //    这里查了七轮才找到的真凶：窗口创建时调过 `setFocusable(false)`
+        //    （那是为了修"点桌宠抢焦点导致视频/直播暂停"），它在 Windows 上给窗口
+        //    加了 **WS_EX_NOACTIVATE**。而这类窗口在 **hide() 再 show() 之后，
+        //    鼠标命中测试会失效** —— 但 **mousemove 照样能到渲染端**。
+        //
+        //    这完美解释了之前所有矛盾的现象：
+        //      · 日志里"事件通道正常"（mousemove 到了）
+        //      · 穿透状态最终是"接管（可点）"（状态是对的）
+        //      · **可就是点不了**（点击送不进窗口）—— 连桌宠菜单也点不了
+        //
+        //    当时那句注释写的是"鼠标事件与焦点无关，照常收（命中测试基于窗口层级）"
+        //    —— **这个假设在 hide/show 之后不成立**。
+        //
+        //    所以这里把建窗时设过的每一项都重新做一遍。
+        try { w.setFocusable(false) } catch (err) {}
+        try { w.setIgnoreMouseEvents(false) } catch (err) {}
         try { w.setAlwaysOnTop(true, 'screen-saver') } catch (err) {}
+        try { w.setVisibleOnAllWorkspaces(true, { visibleOnFullScreen: true }) } catch (err) {}
         try { w.moveTop() } catch (err) {}
+        // 再延后一拍重做一次：show 是异步落地的，紧接着调可能被系统的
+        // "显示过程"覆盖掉。120ms 足够，用户感知不到。
+        setTimeout(() => {
+          try {
+            if (w.isDestroyed()) return
+            // ⚠️ **来回切一次 setFocusable**：Windows 上样式一旦被系统"忘记"，
+            //    单纯重复设置同一个值可能不触发重建；先设成 true 再设回 false
+            //    才会真的重算窗口样式（WS_EX_NOACTIVATE / WS_EX_TRANSPARENT）。
+            //    这是让"重新断言"真正生效的关键一步。
+            w.setFocusable(true)
+            w.setFocusable(false)
+            w.setIgnoreMouseEvents(false)
+            w.setAlwaysOnTop(true, 'screen-saver')
+            w.moveTop()
+          } catch (err) {}
+        }, 120)
         w.__fsWasVisible = false
         // ⚠️⚠️ **让路恢复后必须强制重新评估鼠标穿透。**
         //    主进程和渲染端**各有一个状态缓存**：
