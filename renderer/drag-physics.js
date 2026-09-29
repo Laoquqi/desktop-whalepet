@@ -1715,55 +1715,36 @@
       //    而小窗架构下**立绘本来就钉在窗口右下角**（挂件基础样式 right:0;bottom:0），
       //    所以"窗口右下角贴住工作区右下角"和"立绘右下角贴住工作区右下角"
       //    **是同一件事** —— 直接这么算既精确又少一层换算。
+      // ⚠️⚠️ **启动落位必须用 `documentElement.clientWidth`，不能用 `window.innerWidth`。**
+      //
+      //    实测数据（用户日志）：
+      //        window.innerWidth  = 903      ← 把边框/滚动条区域也算进去了
+      //        getBounds().width  = 901      ← 窗口外框
+      //        真正的内容区        = 900
+      //    启动落位要减掉窗口尺寸：2048-903=1145（错），2048-900=1148（对）
+      //    —— 正好偏 3px，就是用户看到的"向左上偏"。
+      //
+      //    `document.documentElement.clientWidth` 返回的正是**内容区**（不含边框），
+      //    在这里就是 900 —— 一次到位，也不需要任何 IPC
+      //    （之前两轮试过 invoke / 推送，都因为时序问题没落地）。
+      var winW = document.documentElement.clientWidth || window.innerWidth
+      var winH = document.documentElement.clientHeight || window.innerHeight
       var sc0 = screenSize()
       physPos = [
-        sc0.x + sc0.w - window.innerWidth,
-        sc0.y + sc0.h - window.innerHeight,
+        sc0.x + sc0.w - winW,
+        sc0.y + sc0.h - winH,
       ]
-      // —— 诊断：启动落位的真实数字 ——
-      // 用户报"还是向左上偏一点"，这里把参与计算的每一项都打出来，
-      // 一眼就能看出是 availWidth 不对、还是 innerWidth 不对。
+      // ⚠️ 这里**不再需要任何 IPC 修正** —— 上面改用 clientWidth/clientHeight
+      //    之后，启动落位本身就是准的。
+      //    （之前两轮试过 invoke 和"主进程推"，都因为时序问题没落地：
+      //      渲染端注册监听要等挂件就绪，比 did-finish-load 晚几百毫秒到几秒。
+      //      换成一个本地属性就直接绕开了整个时序问题。）
       try {
         log('启动落位: physPos=[' + physPos[0] + ',' + physPos[1] + ']' +
-          ' avail=' + sc0.w + 'x' + sc0.h + '@(' + sc0.x + ',' + sc0.y + ')' +
-          ' inner=' + window.innerWidth + 'x' + window.innerHeight +
-          ' screen=' + (window.screen ? (window.screen.width + 'x' + window.screen.height) : '?') +
-          ' dpr=' + (window.devicePixelRatio || 1))
+          ' 窗口内容区=' + winW + 'x' + winH +
+          '（innerWidth=' + window.innerWidth + ' —— 含边框，不能用来算落位）' +
+          ' avail=' + sc0.w + 'x' + sc0.h + '@(' + sc0.x + ',' + sc0.y + ')')
       } catch (e) {}
-      // ⚠️⚠️ **按"窗口的真实尺寸"再修正一次启动落位。**
-      //    上面那两行用的是 window.innerWidth/innerHeight —— 而透明无边框窗口上
-      //    它不准（实测 inner=903x903，而窗口真实是 901x901）。
-      //    启动落位要减掉窗口尺寸，用错的就会**向左上偏**（用户报的正是这个）。
-      //    主进程的 getBounds() 才是准的。
-      //
-      //    用"主进程推"而不是"渲染端 invoke"：invoke 实测没跑起来
-      //    （调用时机可能早于 handle 注册）。推两次（60ms / 1200ms），
-      //    因为 did-finish-load 之后渲染端的模块可能还在初始化。
-      //    ⚠️ **只能修正一次** —— window.innerWidth 不会变，每推一次都加一次差值
-      //    就会越修越偏。用 didFixStart 锁住。
-      var didFixStart = false
-      function fixStartPos(sz) {
-        try {
-          if (didFixStart) return
-          if (!sz || !sz.width || !sz.height) return
-          var ddx = window.innerWidth - sz.width
-          var ddy = window.innerHeight - sz.height
-          if (!ddx && !ddy) { didFixStart = true; return }
-          didFixStart = true
-          physPos = [physPos[0] + ddx, physPos[1] + ddy]
-          applyOverride()
-          log('按真实窗口尺寸修正启动落位: inner=' + window.innerWidth + 'x' + window.innerHeight +
-              ' 真实=' + sz.width + 'x' + sz.height +
-              ' 修正=' + ddx + ',' + ddy + ' → physPos=[' + physPos[0] + ',' + physPos[1] + ']')
-        } catch (e) {}
-      }
-      try { if (api.onWinSize) api.onWinSize(fixStartPos) } catch (e) {}
-      try {
-        if (api.winSize) api.winSize().then(fixStartPos).catch(function () {})
-      } catch (e) {}
-      // 诊断：记录"监听已注册"的时刻。跟主进程那条"推送窗口尺寸 #1/#20"对照，
-      // 就能看出是"主进程没推"还是"渲染端注册得太晚、消息全丢了"。
-      log('启动落位修正：监听已注册（onWinSize=' + !!api.onWinSize + ' winSize=' + !!api.winSize + '）')
     applyOverride()
     persistPosition()        // 首次接管也把当前位置落盘
     // 注册顺序很重要：必须是 document + capture，且早于挂件
