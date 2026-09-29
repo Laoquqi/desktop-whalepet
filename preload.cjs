@@ -51,6 +51,8 @@ contextBridge.exposeInMainWorld('petApi', {
   // 窗口的真实尺寸（getBounds）。渲染端的 window.innerWidth 在透明无边框窗口上
   // 会比真实值大 3px（1.5px×2 的边缘），启动落位用它算会向左上偏 3px。
   winSize: () => ipcRenderer.invoke('pet:win-size'),
+  // 主进程主动推的窗口真实尺寸（比 invoke 可靠，见 main.cjs 里 pushSize 的说明）
+  onWinSize: (fn) => ipcRenderer.on('pet:win-size', (e, sz) => { try { fn(sz) } catch (err) {} }),
   petCount: () => ipcRenderer.invoke('pet:count'),
   // 自检用：看各只上报的立绘矩形
   petDebugRects: () => ipcRenderer.invoke('pet:debug-rects'),

@@ -539,6 +539,21 @@ function makePetWindow(port, primary) {
   w.webContents.on('did-finish-load', () => {
     try { sendSpawnSpot(w) } catch (err) {}
     broadcastPetCount()
+    // ⚠️⚠️ **把窗口的真实尺寸推给渲染端。**
+    //    渲染端的 window.innerWidth 在透明无边框窗口上不准（实测 903，
+    //    而窗口真实是 901）—— 启动落位要减掉窗口尺寸，用错就偏。
+    //    用"推"而不是让渲染端"invoke"：invoke 实测没跑起来
+    //    （可能是调用时机早于 handle 注册），推更可靠。
+    //    推两次：did-finish-load 之后渲染端的模块可能还在初始化。
+    const pushSize = () => {
+      try {
+        if (w.isDestroyed()) return
+        const b = w.getBounds()
+        w.webContents.send('pet:win-size', { width: b.width, height: b.height })
+      } catch (err) {}
+    }
+    setTimeout(pushSize, 60)
+    setTimeout(pushSize, 1200)
   })
 
   // 页面从本地服务加载（同源），而不是 file://

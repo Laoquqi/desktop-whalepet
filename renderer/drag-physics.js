@@ -1732,26 +1732,34 @@
       } catch (e) {}
       // ⚠️⚠️ **按"窗口的真实尺寸"再修正一次启动落位。**
       //    上面那两行用的是 window.innerWidth/innerHeight —— 而透明无边框窗口上
-      //    **innerWidth 会比真实宽度大 3px**（1.5px×2 的边缘）。
-      //    实测：inner=903x903，而窗口真实是 900x900 ——
-      //    减多了 3px，启动位置就**向左上偏 3px**（用户报的正是这个）。
-      //    主进程的 getBounds() 才是准的，所以问它一次，把差值补回来。
+      //    它不准（实测 inner=903x903，而窗口真实是 901x901）。
+      //    启动落位要减掉窗口尺寸，用错的就会**向左上偏**（用户报的正是这个）。
+      //    主进程的 getBounds() 才是准的。
+      //
+      //    用"主进程推"而不是"渲染端 invoke"：invoke 实测没跑起来
+      //    （调用时机可能早于 handle 注册）。推两次（60ms / 1200ms），
+      //    因为 did-finish-load 之后渲染端的模块可能还在初始化。
+      //    ⚠️ **只能修正一次** —— window.innerWidth 不会变，每推一次都加一次差值
+      //    就会越修越偏。用 didFixStart 锁住。
+      var didFixStart = false
+      function fixStartPos(sz) {
+        try {
+          if (didFixStart) return
+          if (!sz || !sz.width || !sz.height) return
+          var ddx = window.innerWidth - sz.width
+          var ddy = window.innerHeight - sz.height
+          if (!ddx && !ddy) { didFixStart = true; return }
+          didFixStart = true
+          physPos = [physPos[0] + ddx, physPos[1] + ddy]
+          applyOverride()
+          log('按真实窗口尺寸修正启动落位: inner=' + window.innerWidth + 'x' + window.innerHeight +
+              ' 真实=' + sz.width + 'x' + sz.height +
+              ' 修正=' + ddx + ',' + ddy + ' → physPos=[' + physPos[0] + ',' + physPos[1] + ']')
+        } catch (e) {}
+      }
+      try { if (api.onWinSize) api.onWinSize(fixStartPos) } catch (e) {}
       try {
-        if (api.winSize) {
-          api.winSize().then(function (sz) {
-            try {
-              if (!sz || !sz.width || !sz.height) return
-              var ddx = window.innerWidth - sz.width
-              var ddy = window.innerHeight - sz.height
-              if (!ddx && !ddy) return
-              physPos = [physPos[0] + ddx, physPos[1] + ddy]
-              applyOverride()
-              log('按真实窗口尺寸修正启动落位: inner=' + window.innerWidth + 'x' + window.innerHeight +
-                  ' 真实=' + sz.width + 'x' + sz.height +
-                  ' 修正=' + ddx + ',' + ddy + ' → physPos=[' + physPos[0] + ',' + physPos[1] + ']')
-            } catch (e) {}
-          }).catch(function () {})
-        }
+        if (api.winSize) api.winSize().then(fixStartPos).catch(function () {})
       } catch (e) {}
     applyOverride()
     persistPosition()        // 首次接管也把当前位置落盘
