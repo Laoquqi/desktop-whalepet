@@ -182,8 +182,14 @@ function setPetsYieldForFullscreen(hidden) {
             try { if (!w.isDestroyed() && w.isVisible()) w.hide() } catch (err) {}
           }, 260)
         }
-        // 藏着的时候定时器没必要全速跑：打开节流（恢复时关掉）
-        try { w.webContents.setBackgroundThrottling(true) } catch (err) {}
+        // ⚠️⚠️ **不要在这里 setBackgroundThrottling(true)。**
+        //    原来藏着的时候会打开节流省 CPU，但它留下了一个很深的坑：
+        //    被节流的渲染进程**不跑 requestAnimationFrame 回调**，
+        //    而渲染端的"按指针位置决定鼠标穿透"正好是用 rAF 做的 ——
+        //    于是恢复后 rAF 可能一直不被调度 → setInteractive 永不执行 →
+        //    窗口永远停在穿透 → 用户说的"一点反应都没有"。
+        //    隐藏窗口本来就会被系统降频，这个节流省不了多少，坑却很深，去掉。
+        //    （渲染端也已经把 rAF 换成 setTimeout，双保险。）
       } else if (w.__fsWasVisible) {
         try { w.webContents.setBackgroundThrottling(false) } catch (err) {}
         w.showInactive()                       // 不抢焦点：视频刚退出全屏，别把前台抢过来

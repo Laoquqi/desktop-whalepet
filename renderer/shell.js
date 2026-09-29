@@ -185,10 +185,18 @@
     if (window.__dshpetDragging) return          // 拖动中：跳过，别和拖动抢布局
     if (updateScheduled) return                  // 合并到下一帧，多个事件只算一次
     updateScheduled = true
-    requestAnimationFrame(function () {
+    // ⚠️⚠️ **这里绝对不能用 requestAnimationFrame。**
+    //    原来写的是 rAF(...)，而**被节流的渲染进程不跑 rAF 回调** ——
+    //    全屏让路时主进程会 setBackgroundThrottling(true)，
+    //    恢复后即使关掉节流，rAF 回调也可能一直不被调度。
+    //    后果：鼠标事件明明到了（handler 跑了），但真正决定穿透状态的
+    //    setInteractive() **永远不执行** → 窗口永远停在"穿透" →
+    //    表现就是用户说的"一点反应都没有"（连桌宠菜单都点不了）。
+    //    改用 setTimeout(0)：定时器即使被节流也只是延迟，不会像 rAF 那样彻底不跑。
+    setTimeout(function () {
       updateScheduled = false
       setInteractive(evaluate(lastX, lastY))
-    })
+    }, 0)
   }
 
   window.addEventListener('mousemove', update, true)
