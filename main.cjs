@@ -1146,9 +1146,14 @@ function buildTray() {
     //    代价是极短的重绘闪烁；真正无闪烁要自绘一个菜单窗口，那是另一个专项。
     //    「退出」不加这个包装 —— 点了就该退，不能又弹回来。
     let trayMenu = null
+    // ⚠️⚠️ **不要用 popUpContextMenu 重新弹出。**
+    //    上一版为了让"点一项后菜单还开着"这么做过，但实测：重新弹出会让菜单
+    //    **跳到鼠标当前位置重开**（用户反馈"会乱动，要保持托盘原菜单位置不动"）。
+    //    原生托盘菜单**无法同时做到"保持打开"和"保持原位"** —— 这是系统菜单，
+    //    没有位置参数。要那个效果只能自绘一个菜单窗口（另一个专项）。
+    //    所以这里只保留"统一包一层错误捕获"，不再重新弹出。
     const keepOpen = (fn) => (...a) => {
       try { fn(...a) } catch (err) { log('托盘菜单项出错', err && err.message) }
-      setTimeout(() => { try { if (trayMenu) tray.popUpContextMenu(trayMenu) } catch (err) {} }, 60)
     }
     const menu = Menu.buildFromTemplate([
       { label: '显示 / 隐藏', click: keepOpen(() => { if (!win) return; win.isVisible() ? win.hide() : win.showInactive() }) },

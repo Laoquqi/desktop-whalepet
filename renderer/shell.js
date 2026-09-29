@@ -203,10 +203,18 @@
   //    （下面那个 1 秒兜底复核也依赖 lastX/lastY，不够确定 —— 这条是确定性的。）
   if (api.onReevalInteractive) {
     api.onReevalInteractive(function () {
-      lastInteractive = null          // 关键：清缓存，否则 setInteractive 会直接 return
-      var want = (lastX >= 0) ? evaluate(lastX, lastY) : false
-      setInteractive(want)
-      log('重新评估鼠标穿透 → ' + (want ? '接管（可点）' : '穿透'))
+      // ⚠️⚠️ **只清缓存，绝对不要用旧坐标重算。**
+      //    lastX/lastY 是**全屏前**鼠标的位置 —— 那时鼠标在视频上（视频全屏了），
+      //    拿它 evaluate() 必然得出"穿透"，于是刚被主进程接管回来的窗口
+      //    又被打回穿透 —— 死锁原样保留（日志实测：
+      //    「重新评估鼠标穿透 → 穿透」，紧接着用户就点不动了）。
+      //
+      //    主进程那边已经把窗口强制设成"接管"了，这里只要**让下一次真实的
+      //    mousemove 能重新下发**就够了 —— 清掉本地缓存即可。
+      //    用户把鼠标移到她身上时会触发 mousemove，那时 evaluate 用的是
+      //    **真实指针位置**，判定才准。
+      lastInteractive = null
+      log('已清穿透缓存（等下一次鼠标移动重新判定，不用旧坐标硬算）')
     })
   }
 
