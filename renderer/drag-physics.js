@@ -358,7 +358,6 @@
       //    于是挂件照写它的，视觉上纹丝不动，styleObs 也就不用撤了 ——
       //    从"反复打架"变成"根本打不起来"。
       //    基础样式 right:0;bottom:0 会把根钉在窗口右下，正是我们要的位置。
-      '.dshwv-root{left:auto !important;top:auto !important}',
       '.dshpet-phys-row{display:flex;align-items:center;gap:6px;margin:5px 0;color:#203170;font-size:12px;white-space:nowrap}',
       '.dshpet-phys-row input{width:16px;height:16px;accent-color:#203170;cursor:pointer;flex:0 0 auto}',
       '.dshpet-phys-hint{color:#9fb0d9;font-size:11px}',
