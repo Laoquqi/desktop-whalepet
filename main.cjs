@@ -209,6 +209,16 @@ function setPetsYieldForFullscreen(hidden) {
         try { w.setIgnoreMouseEvents(false) } catch (err) {}
         interactiveOf.set(w, true)
         try { w.webContents.send('pet:reeval-interactive') } catch (err) {}
+        // —— 诊断：把窗口恢复后的**真实状态**记下来 ——
+        // "点不了"查了四轮都没解决，不再靠推理。这几项一旦异常，
+        // 日志一眼就能定位：不可见 / 位置离谱 / 渲染进程没响应。
+        setTimeout(() => {
+          try {
+            log('让路恢复: visible=' + w.isVisible() +
+                ' bounds=' + JSON.stringify(w.getBounds()) +
+                ' destroyed=' + w.isDestroyed())
+          } catch (err) {}
+        }, 300)
         // ⚠️ **让路恢复后必须验一下渲染进程真的醒了。**
         //    让路时上面那句 setBackgroundThrottling(true) 会把它节流"睡着"，
         //    而 showInactive() + 关掉节流**并不保证**它能醒来 ——
@@ -537,6 +547,7 @@ function setInteractive(on, w) {
     interactiveOf.set(w, on)
     if (on) w.setIgnoreMouseEvents(false)
     else w.setIgnoreMouseEvents(true, { forward: true })
+    log('穿透状态 → ' + (on ? '接管（可点）' : '穿透'))     // 诊断：谁在什么时候改的
   } catch (err) { log('切换鼠标穿透失败', err && err.message) }
 }
 

@@ -134,6 +134,7 @@
   }
 
   var lastInteractive = null
+  var waitMoveLog = false     // 诊断：让路恢复后等第一个 mousemove（见 onReevalInteractive）
   var lastX = -1
   var lastY = -1
   var forced = false          // 托盘强制穿透
@@ -177,6 +178,10 @@
   function update(e) {
     lastX = e.clientX
     lastY = e.clientY
+    if (waitMoveLog) {                      // 诊断：让路恢复后的第一个鼠标移动
+      waitMoveLog = false
+      log('让路恢复后收到第一个 mousemove (' + lastX + ',' + lastY + ') → 事件通道正常')
+    }
     if (window.__dshpetDragging) return          // 拖动中：跳过，别和拖动抢布局
     if (updateScheduled) return                  // 合并到下一帧，多个事件只算一次
     updateScheduled = true
@@ -214,6 +219,11 @@
       //    用户把鼠标移到她身上时会触发 mousemove，那时 evaluate 用的是
       //    **真实指针位置**，判定才准。
       lastInteractive = null
+      // —— 诊断：等下一次鼠标移动，看事件到底有没有到窗口 ——
+      // "点不了"查了四轮。这条日志是**决定性**的：
+      //   有 → 事件到了，问题在判定逻辑
+      //   没有 → 事件根本没到窗口（窗口不可见 / 位置离谱 / 被系统挡住）
+      waitMoveLog = true
       log('已清穿透缓存（等下一次鼠标移动重新判定，不用旧坐标硬算）')
     })
   }
