@@ -10,6 +10,8 @@ contextBridge.exposeInMainWorld('petApi', {
   getDataDir: () => ipcRenderer.invoke('pet:data-dir'),
   // 鼠标是否穿透由渲染进程按"指针在不在挂件上"决定
   setInteractive: (on) => ipcRenderer.send('pet:set-interactive', !!on),
+  // 小窗口架构：渲染进程的物理位置（屏幕坐标）驱动窗口移动
+  moveWindow: (p) => ipcRenderer.send('pet:move-window', p),
   // 诊断：IPC 监听器数量。
   // ⚠️ ipcRenderer.on 注册的监听器**不会随页面重载自动清掉**（同一个渲染进程），
   //    所以任何"重载页面"的开关都会让监听器越积越多 —— 一次操作触发 N 次重载，

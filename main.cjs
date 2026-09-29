@@ -320,8 +320,20 @@ function makePetWindow(port, primary) {
   log('createWindow: port=' + port + ' root=' + ROOT)
   const b = displayBounds()
   log('createWindow: bounds=' + JSON.stringify(b))
+  // —— 小窗口架构：窗口 = 跟随桌宠的**小窗**，不再全屏透明 ——
+  // 尺寸 900×900：桌宠盒子（约 375×375）钉在窗口**右下**，上方留 ~525px
+  // 给 ☰ 菜单/气泡/米粒面板（它们都以桌宠为锚、随窗口走）。
+  // ⚠️ **两维都必须 ≥893**：挂件的尺寸公式是 min(250, min(100vw,100vh)×0.28)×缩放
+  //    —— 窗口窄了桌宠会跟着缩小（实测 640 宽 → 桌宠缩到 160px）。
+  // 出生位置 = 工作区右下（和旧行为一致：立绘贴工作区右下、任务栏上沿）。
+  // 好处：① 不再大面积覆盖视频（点击/重绘不会挤掉视频的硬件叠加层）；
+  //       ② 合成器缓冲从全屏降到小窗（显存/内存齐降）；
+  //       ③ "全屏让路"仍保留（真全屏应用前台时照样自动隐藏）。
+  const PET_WIN_W = 900
+  const PET_WIN_H = Math.min(900, Math.max(600, b.height - 80))
   const w = new BrowserWindow({
-    x: b.x, y: b.y, width: b.width, height: b.height,
+    x: b.x + b.width - PET_WIN_W, y: b.y + b.height - PET_WIN_H,
+    width: PET_WIN_W, height: PET_WIN_H,
     transparent: true,
     frame: false,
     resizable: false,
@@ -348,6 +360,7 @@ function makePetWindow(port, primary) {
       affinity: 'dafatfish-pet',
     },
   })
+  w.__petWinSize = { width: PET_WIN_W, height: PET_WIN_H }
 
   w.setAlwaysOnTop(true, 'screen-saver')
   // ⚠️ **不可激活窗口**：点击桌宠不抢焦点。看视频/直播时点她，视频窗口
@@ -357,11 +370,9 @@ function makePetWindow(port, primary) {
   //    —— 松右键/失焦 —— 不受影响；弹弓蓄力本身是鼠标操作）。
   try { w.setFocusable(false) } catch (err) {}
   try { w.setVisibleOnAllWorkspaces(true, { visibleOnFullScreen: true }) } catch (err) {}
-  // ⚠️ Windows 会把普通窗口的尺寸钳到"工作区"（任务栏那一条不算）——
-  //    构造时传整屏 bounds 也没用，实测窗口只有 2048×1104 而屏幕是 2048×1152，
-  //    于是屏幕边缘有一条**她的位置到不了**（用户报的"有一块拖不到"）。
-  //    建好之后再 setBounds 一次，才能真的盖住整屏。
-  try { w.setBounds(b) } catch (err) {}
+  // （旧全屏架构的"再 setBounds 一次盖住整屏"已随小窗口改造移除——
+  //   窗口现在就是 640×900 的小窗，尺寸/位置由上面的构造参数决定，
+  //   之后的移动走 pet:move-window，由渲染进程的物理位置驱动。）
   // 默认整窗穿透；鼠标移到挂件上时由渲染进程通知打开
   w.setIgnoreMouseEvents(true, { forward: true })
   pets.push(w)
@@ -577,6 +588,21 @@ ipcMain.handle('pet:debug-rects', () => {
 // 渲染进程报上来的**立绘**矩形（屏幕坐标）+ 有没有正在被拖。
 // dragging 是给被拖的那只推不动、只能靠对方让开用的（见 renderer/pet-collide.js）。
 let rectSeq = 0
+// —— 小窗口架构：渲染进程驱动窗口移动 ——
+// 渲染进程的物理位置（physPos，屏幕坐标）就是窗口的位置：拖拽/抛掷/吸附/
+// 每次落定都经这里把窗口挪过去。只挪位置、不改尺寸（尺寸固定 640×900）。
+// 限幅：x/y 非有限值或离屏超过一屏就直接忽略（防御非法值把窗口扔丢）。
+ipcMain.on('pet:move-window', (e, p) => {
+  const w = BrowserWindow.fromWebContents(e.sender)
+  if (!w || w.isDestroyed() || !p) return
+  const x = Number(p.x), y = Number(p.y)
+  if (!isFinite(x) || !isFinite(y)) return
+  const size = w.__petWinSize || { width: w.getBounds().width, height: w.getBounds().height }
+  const b = displayBounds()
+  const cx = Math.min(Math.max(x, b.x - size.width), b.x + b.width)
+  const cy = Math.min(Math.max(y, b.y - size.height), b.y + b.height)
+  try { w.setBounds({ x: Math.round(cx), y: Math.round(cy), width: size.width, height: size.height }) } catch (err) {}
+})
 ipcMain.on('pet:report-rect', (e, r) => {
   const w = BrowserWindow.fromWebContents(e.sender)
   if (!w || !r) return
@@ -1803,6 +1829,7 @@ async function runSelfTest() {
           const cx = Math.round(ir2.left + ir2.width / 2)
           const cy = Math.round(ir2.top + ir2.height / 2)
           const base = { bubbles: true, cancelable: true, clientX: cx, clientY: cy,
+                         screenX: cx + (window.screenX || 0), screenY: cy + (window.screenY || 0),
                          button: 0, pointerType: 'mouse', pointerId: 1, isPrimary: true }
           // ⚠️ .dshwv-pop 是**静态元素**（一直在 DOM 里），开合靠加 dshwv-pop-open 类。
           //    所以判据是那个类，不是元素在不在。
@@ -1833,6 +1860,7 @@ async function runSelfTest() {
           } catch (e) { out.elemDiagError = String(e && e.message) }
           const mk = (type, x, extra) => new PointerEvent(type, Object.assign({
             bubbles: true, cancelable: true, clientX: x, clientY: dsy,
+            screenX: x + (window.screenX || 0), screenY: dsy + (window.screenY || 0),
             button: 0, pointerType: 'mouse', pointerId: 9, isPrimary: true,
           }, extra || {}))
           ;(document.elementFromPoint(dsx, dsy) || document.body).dispatchEvent(mk('pointerdown', dsx, { buttons: 1 }))
@@ -1873,6 +1901,7 @@ async function runSelfTest() {
           const tsy = Math.round(tIr.top + tIr.height / 2)
           const mk2 = (type, x, y, extra) => new PointerEvent(type, Object.assign({
             bubbles: true, cancelable: true, clientX: x, clientY: y,
+            screenX: x + (window.screenX || 0), screenY: y + (window.screenY || 0),
             button: 0, pointerType: 'mouse', pointerId: 11, isPrimary: true,
           }, extra || {}))
           ;(document.elementFromPoint(tsx, tsy) || document.body).dispatchEvent(mk2('pointerdown', tsx, tsy, { buttons: 1 }))
@@ -2073,6 +2102,7 @@ async function runSelfTest() {
               const by2 = Math.max(5, pr4.top + 10)
               const mkX = (t) => new PointerEvent(t, {
                 bubbles: true, cancelable: true, clientX: bx2, clientY: by2,
+                screenX: bx2 + (window.screenX || 0), screenY: by2 + (window.screenY || 0),
                 button: 0, buttons: t === 'pointerdown' ? 1 : 0,
                 pointerType: 'mouse', pointerId: 41, isPrimary: true,
               })
@@ -2197,6 +2227,7 @@ async function runSelfTest() {
               const wy = Math.round(wr0.top + wr0.height / 2)
               const mkM = (type) => new PointerEvent(type, {
                 bubbles: true, cancelable: true, clientX: wx, clientY: wy,
+                screenX: wx + (window.screenX || 0), screenY: wy + (window.screenY || 0),
                 button: 0, buttons: type === 'pointerdown' ? 1 : 0,
                 pointerType: 'mouse', pointerId: 31, isPrimary: true,
               })
@@ -2270,6 +2301,7 @@ async function runSelfTest() {
           const osy = Math.round(oIr.top + oIr.height / 2)
           const mk4 = (type, x, y, extra) => new PointerEvent(type, Object.assign({
             bubbles: true, cancelable: true, clientX: x, clientY: y,
+            screenX: x + (window.screenX || 0), screenY: y + (window.screenY || 0),
             button: 0, pointerType: 'mouse', pointerId: 13, isPrimary: true,
           }, extra || {}))
           ;(document.elementFromPoint(osx, osy) || document.body).dispatchEvent(mk4('pointerdown', osx, osy, { buttons: 1 }))
@@ -2345,6 +2377,7 @@ async function runSelfTest() {
           const bsy = Math.round(bIr.top + bIr.height / 2)
           const mk3 = (type, x, y, extra) => new PointerEvent(type, Object.assign({
             bubbles: true, cancelable: true, clientX: x, clientY: y,
+            screenX: x + (window.screenX || 0), screenY: y + (window.screenY || 0),
             button: 0, pointerType: 'mouse', pointerId: 12, isPrimary: true,
           }, extra || {}))
           ;(document.elementFromPoint(bsx, bsy) || document.body).dispatchEvent(mk3('pointerdown', bsx, bsy, { buttons: 1 }))
@@ -2457,6 +2490,7 @@ async function runSelfTest() {
                 const by = Math.round(br.top + br.height / 2)
                 const mkC = (type) => new PointerEvent(type, {
                   bubbles: true, cancelable: true, clientX: bx, clientY: by,
+                  screenX: bx + (window.screenX || 0), screenY: by + (window.screenY || 0),
                   button: 0, buttons: type === 'pointerdown' ? 1 : 0,
                   pointerType: 'mouse', pointerId: 21, isPrimary: true,
                 })
@@ -2691,6 +2725,7 @@ async function runSelfTest() {
               out.pgElemAtPress = tgtP.tagName + '.' + String(tgtP.className || '').slice(0, 30)
               const mkP = (type, extra) => new PointerEvent(type, Object.assign({
                 bubbles: true, cancelable: true, clientX: cx, clientY: cy,
+                screenX: cx + (window.screenX || 0), screenY: cy + (window.screenY || 0),
                 button: 0, pointerType: 'mouse', pointerId: 401, isPrimary: true,
               }, extra || {}))
               tgtP.dispatchEvent(mkP('pointerdown', { buttons: 1 }))
