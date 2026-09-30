@@ -810,6 +810,8 @@ ipcMain.on('pet:renderer-ready', (e) => {
 //    铺满期间要挡住渲染端的 pet:move-window（物理还在跑，会把窗口拖回原位），
 //    以及让路的 pet:move-window 一样处理 —— 用 __panelExpanded 标记。
 let panelSavedBounds = null
+// 自检用：最近一次渲染进程发来的"面板焦点"请求（null = 一次都没发过）
+let lastPanelFocus = null
 
 // ⚠️⚠️ **面板打开时临时允许窗口被激活。**
 //
@@ -826,7 +828,20 @@ ipcMain.on('pet:panel-focus', (e, want) => {
   try {
     const w = BrowserWindow.fromWebContents(e.sender)
     if (!w || w.isDestroyed()) return
-    w.setFocusable(!!want)
+    lastPanelFocus = !!want
+    // ⚠️ 和建窗时同一条坑：Windows 上 `setFocusable` 只调一次，
+    //    系统有时**不真的更新** WS_EX_NOACTIVATE 样式（建窗那段注释里记着，
+    //    当时是靠"来回切一次"逼它生效的）。
+    //    面板焦点这条是"用的时候才切"，一次切不到位就表现为
+    //    "明明放开了，输入框还是打不了字/下拉还是拉不出来" —— 所以照样来回切一次。
+    if (want) {
+      w.setFocusable(true)
+    } else {
+      w.setFocusable(true)
+      w.setFocusable(false)
+    }
+    // 切焦点属性不能碰置顶（否则面板会被别的窗口盖住）
+    try { w.setAlwaysOnTop(true, 'screen-saver') } catch (err) {}
     log('面板焦点 → ' + (want ? '可激活（输入框/下拉可用）' : '不可激活（点她不抢焦点）'))
   } catch (err) {}
 })
@@ -4964,6 +4979,315 @@ async function runSelfTest() {
 //     PET_SELFTEST=1 PET_FOCUS=rice-click electron .
 // 它复用同一套"等页面加载 + 等挂件初始化"的流程，只跳过后面的慢段落。
 async function runFocusProbe() {
+  // —— 点了菜单里的功能之后，"再点桌宠就没反应/卡死" ——
+  // 用户报："点击桌盘菜单的功能后会出现点击桌宠无反应的情况，会卡死。"
+  // 照他的顺序走：开菜单 → 点里面的功能 → 再点她 → 看她有没有反应、
+  // 有没有卡住（拖拽态没清掉 / 事件循环被拖住）。
+  if (FOCUS === 'pet-after-menu') {
+    const checks = []
+    const add = (ok, label, extra) => checks.push({ ok: !!ok, label, extra })
+    const out = {}
+    const sleep = (ms) => new Promise((r) => setTimeout(r, ms))
+    const js = (code) => win.webContents.executeJavaScript(code)
+    // 事件循环延迟探针：卡死的话这个数会非常大
+    const LAG = `new Promise(function (res) {
+      var t0 = performance.now(), n = 0, max = 0
+      var iv = setInterval(function () {
+        var d = performance.now() - t0 - 100 * (++n)
+        if (d > max) max = d
+        if (n >= 8) { clearInterval(iv); res(Math.round(max)) }
+      }, 100)
+    })`
+    // 在她身上"真实"点一下（合成指针事件，和自检里其它用例同一套）
+    const clickPet = async () => js(`(async function () {
+      var img = document.querySelector('img.dshwv-img')
+      if (!img) return null
+      var r = img.getBoundingClientRect()
+      var x = Math.round(r.left + r.width / 2), y = Math.round(r.top + r.height / 2)
+      var mk = function (type) { return new PointerEvent(type, {
+        bubbles: true, cancelable: true, clientX: x, clientY: y,
+        screenX: x + (window.screenX || 0), screenY: y + (window.screenY || 0),
+        button: 0, buttons: type === 'pointerdown' ? 1 : 0,
+        pointerType: 'mouse', pointerId: 91, isPrimary: true }) }
+      document.dispatchEvent(mk('pointerdown'))
+      await new Promise(function (r2) { setTimeout(r2, 60) })
+      document.dispatchEvent(mk('pointermove'))
+      await new Promise(function (r2) { setTimeout(r2, 60) })
+      document.dispatchEvent(mk('pointerup'))
+      img.dispatchEvent(new MouseEvent('click', { bubbles: true, cancelable: true, clientX: x, clientY: y }))
+      return { x: x, y: y }
+    })()`)
+    const snap = () => js(`(function () {
+      var img = document.querySelector('img.dshwv-img')
+      var menu = document.querySelector('.dshwv-menu')
+      var sub = document.querySelector('.dshwv-usage-sub')
+      return {
+        sprite: img ? String(img.getAttribute('src') || '') : null,
+        menuOpen: !!(menu && menu.classList.contains('dshwv-menu-open')),
+        usageSub: sub ? getComputedStyle(sub).display : null,
+        dragging: (window.__dshpetPhysics && window.__dshpetPhysics.isDragging)
+          ? window.__dshpetPhysics.isDragging() : null,
+        mode: (window.__dshpetPhysics && window.__dshpetPhysics._state)
+          ? (window.__dshpetPhysics._state().mode) : null,
+        pos: (window.__dshpetPhysics && window.__dshpetPhysics._state)
+          ? window.__dshpetPhysics._state().pos : null,
+        interactive: (typeof window.__petShellEvaluate === 'function')
+          ? window.__petShellEvaluate(window.__petLastX || 0, window.__petLastY || 0) : null,
+      }
+    })()`)
+    try {
+      // ① 开菜单 → 点里面的「小鲸鱼记账」
+      await js(`document.querySelector('.dshwv-menu-btn').click()`)
+      await sleep(700)
+      out.menuOpen = await js(`!!document.querySelector('.dshwv-menu.dshwv-menu-open')`)
+      const clicked = await js(`(function () {
+        var box = document.querySelector('.dshwv-menu')
+        if (!box) return false
+        var c = box.querySelectorAll('button,div,span')
+        for (var i = 0; i < c.length; i++) {
+          if ((c[i].textContent || '').indexOf('小鲸鱼记账') >= 0 && c[i].children.length === 0) {
+            c[i].click(); return true
+          }
+        }
+        return false
+      })()`)
+      out.clickedAccounting = clicked
+      await sleep(900)
+      out.lagBefore = await js(LAG)
+      out.before = await snap()
+
+      // ② 这时再点她 —— 用户说的"点了没反应"
+      await clickPet()
+      await sleep(1500)
+      out.afterClick1 = await snap()
+      out.lagAfterClick1 = await js(LAG)
+
+      // ③ 再点一次，看还动不动
+      await clickPet()
+      await sleep(1500)
+      out.afterClick2 = await snap()
+      out.lagAfterClick2 = await js(LAG)
+
+      add(out.lagBefore !== null && out.lagAfterClick2 < 800,
+        '★ 点完菜单功能后再点她，页面**没有卡死**（事件循环延迟正常）',
+        '延迟(ms) 点前=' + out.lagBefore + ' 点一次后=' + out.lagAfterClick1 + ' 点两次后=' + out.lagAfterClick2)
+      add(out.afterClick2 && out.afterClick2.dragging === false,
+        '★ 点她之后**没有留下卡住的拖拽态**（否则后面全都没反应）',
+        'dragging: 点前=' + JSON.stringify(out.before && out.before.dragging) +
+        ' 点一次后=' + JSON.stringify(out.afterClick1 && out.afterClick1.dragging) +
+        ' 点两次后=' + JSON.stringify(out.afterClick2 && out.afterClick2.dragging))
+      // 点她必须真的有点反应：要么菜单收起来、要么贴图变了、要么位置动了
+      const reacted = !!(out.afterClick2 && out.before) && (
+        out.afterClick2.menuOpen !== out.before.menuOpen ||
+        out.afterClick2.sprite !== out.before.sprite)
+      add(reacted,
+        '★ 点她**真的有反应**（菜单收起 或 贴图变化）',
+        '菜单: ' + (out.before && out.before.menuOpen) + ' → ' + (out.afterClick2 && out.afterClick2.menuOpen) +
+        '  贴图: ' + (out.before && out.before.sprite) + ' → ' + (out.afterClick2 && out.afterClick2.sprite))
+    } catch (err) {
+      add(false, 'pet-after-menu 探针抛异常', err && err.message)
+    }
+    out.checks = checks
+    return out
+  }
+  // —— 小鲸鱼记账里的输入框/下拉能不能用 ——
+  // 用户报："小鲸鱼记账里的输入框和选择栏都无法正常使用。"
+  // 这条探针照他的操作顺序走：开菜单 → 点「小鲸鱼记账」→ 看面板里的
+  // input/select 到底卡在哪一环（穿透？焦点？层级？）。
+  if (FOCUS === 'accounting') {
+    const focusBaseline = lastPanelFocus
+    const checks = []
+    const add = (ok, label, extra) => checks.push({ ok: !!ok, label, extra })
+    const out = { focusBaseline: lastPanelFocus }
+    const sleep = (ms) => new Promise((r) => setTimeout(r, ms))
+    const js = (code) => win.webContents.executeJavaScript(code)
+    // ⚠️ **不要在这里把 lastPanelFocus 清成 null。**
+    //    panel-focus.js 是**边沿触发**的（状态没变就不发 IPC），
+    //    页面上已经有"可见表单"的时候它在加载那一刻就发过一次 true 了 ——
+    //    这里清掉的话，只要状态不变就永远收不到新的，探针会误判成"没发"。
+    //    所以照"转变"来判断：开界面 → 必须 true；全关掉 → 必须 false。
+    try {
+      // ① 开菜单
+      const btn = await js(`(function(){
+        var b = document.querySelector('.dshwv-menu-btn')
+        if (!b) return null
+        var r = b.getBoundingClientRect()
+        return { x: Math.round(r.left + r.width / 2), y: Math.round(r.top + r.height / 2) }
+      })()`)
+      out.menuBtn = btn
+      if (btn) { await js(`document.querySelector('.dshwv-menu-btn').click()`); await sleep(700) }
+      out.menuOpenAfterClick = await js(
+        `!!document.querySelector('.dshwv-menu.dshwv-menu-open')`)
+
+      // ② 找到并点「小鲸鱼记账」
+      const ub = await js(`(function(){
+        var box = document.querySelector('.dshwv-menu')
+        if (!box) return null
+        var cands = box.querySelectorAll('button,div,span')
+        for (var i = 0; i < cands.length; i++) {
+          var t = (cands[i].textContent || '')
+          if (t.indexOf('小鲸鱼记账') < 0) continue
+          // 取**最内层**那个（文本正好是它自己的）
+          if (cands[i].children.length > 0) continue
+          var r = cands[i].getBoundingClientRect()
+          if (r.width < 2 || r.height < 2) continue
+          return { text: t.slice(0, 30), cls: String(cands[i].className),
+                   x: Math.round(r.left + r.width / 2), y: Math.round(r.top + r.height / 2) }
+        }
+        return { missing: true }
+      })()`)
+      out.usageBtn = ub
+      if (ub && ub.x) {
+        await js(`(function(){
+          var box = document.querySelector('.dshwv-menu')
+          var cands = box.querySelectorAll('button,div,span')
+          for (var i = 0; i < cands.length; i++) {
+            if ((cands[i].textContent || '').indexOf('小鲸鱼记账') >= 0 && cands[i].children.length === 0) {
+              cands[i].click(); return true
+            }
+          }
+          return false
+        })()`)
+        await sleep(900)
+      }
+
+      // ③ 面板 + 输入框现状
+      const pan = await js(`(function(){
+        var res = {}
+        res.menuOpen = !!document.querySelector('.dshwv-menu.dshwv-menu-open')
+        res.usagePanelExists = !!document.querySelector('.dshwv-usagepanel')
+        var sub = document.querySelector('.dshwv-usage-sub')
+        res.usageSub = sub ? (function(){
+          var cs = getComputedStyle(sub); var r = sub.getBoundingClientRect()
+          return { display: cs.display, pe: cs.pointerEvents,
+                   w: Math.round(r.width), h: Math.round(r.height) }
+        })() : null
+        var list = []
+        var all = document.querySelectorAll('input,select')
+        for (var i = 0; i < all.length; i++) {
+          var el = all[i]
+          var r = el.getBoundingClientRect()
+          if (r.width < 2 || r.height < 2) continue
+          var cs = getComputedStyle(el)
+          if (cs.display === 'none' || cs.visibility === 'hidden') continue
+          var x = Math.round(r.left + r.width / 2), y = Math.round(r.top + r.height / 2)
+          var top = document.elementFromPoint(x, y)
+          list.push({
+            tag: el.tagName, type: el.type || '', cls: String(el.className).slice(0, 40),
+            pe: cs.pointerEvents, editable: el.disabled !== true,
+            x: x, y: y, w: Math.round(r.width), h: Math.round(r.height),
+            fromPoint: top ? (top.tagName + '.' + String(top.className).slice(0, 36)) : null,
+            hitSelf: top === el,
+            hitInside: !!(top && top.closest && top.closest('input,select') === el),
+            shellInteractive: (typeof window.__petShellEvaluate === 'function')
+              ? window.__petShellEvaluate(x, y) : null,
+            whaleHit: (typeof window.__petWhaleHit === 'function')
+              ? window.__petWhaleHit(x, y) : null,
+          })
+        }
+        res.fields = list
+        return res
+      })()`)
+      out.panel = pan
+      out.panelFocusSent = lastPanelFocus
+
+      add(!!(pan && pan.menuOpen && pan.usageSub && pan.usageSub.display === 'block'),
+        '★ 「小鲸鱼记账」界面能打开（挂在 ☰ 菜单里，不是独立面板 —— 这就是原来漏掉它的原因）',
+        '界面=' + JSON.stringify(pan && { menuOpen: pan.menuOpen, usagePanelExists: pan.usagePanelExists, usageSub: pan.usageSub }) +
+        ' 这一屏的控件数=' + (pan && pan.fields ? pan.fields.length : -1) + '（总览屏本来就只读，输入框在更深的编辑器里）')
+      add(out.panelFocusSent === true,
+        '★ 记账界面一打开，窗口立刻被设为**可激活**（原来因为清单里的类名不存在，一次都没发过）',
+        '主进程收到的面板焦点 = ' + JSON.stringify(out.panelFocusSent))
+
+      // ⚠️ 记账的"用量总览"那一屏本来就是只读的（没有 input），
+      //    输入框/下拉在更深的编辑器里（模型价目表、额度/余额校正）。
+      //    所以这里再单独验一次**机制本身**：把界面全关掉（此时应为不可激活），
+      //    再放一个挂件样式的真输入框进去，看窗口会不会转成"可激活"、能不能打字。
+      //    只要这一条通了，那些更深的面板里的输入框就都能用。
+      await js(`(function () {
+        var m = document.querySelector('.dshwv-menu')
+        if (m) m.classList.remove('dshwv-menu-open')
+        return true
+      })()`)
+      await sleep(900)
+      out.focusAfterAllClosed = lastPanelFocus
+      out.mechanism = await js(`(function () {
+        // 挂到 body 上、用挂件前缀的类名 —— 这样它一定"看得见"，
+        // 正好验 hasVisibleForm() 这条兜底判据（不依赖任何面板类名）。
+        var el = document.createElement('input')
+        el.type = 'text'
+        el.className = 'dshwv-cropname dshpet-probe-input'
+        el.style.cssText = 'position:fixed;left:8px;top:8px;width:120px;height:22px;z-index:999999'
+        document.body.appendChild(el)
+        return { added: !!el.isConnected }
+      })()`)
+      await sleep(900)
+      out.panelFocusAfterInput = lastPanelFocus
+      out.mechFocus = await js(`(function () {
+        var el = document.querySelector('.dshpet-probe-input')
+        if (!el) return { missing: true }
+        el.focus()
+        var ok = document.activeElement === el
+        // 真的敲一个字符进去，看 value 变不变（这才是"能打字"）
+        var before = el.value
+        try {
+          el.dispatchEvent(new KeyboardEvent('keydown', { key: 'A', bubbles: true }))
+          el.dispatchEvent(new KeyboardEvent('keypress', { key: 'A', bubbles: true }))
+          if (typeof el.setRangeText === 'function') el.setRangeText('A', 0, 0, 'end')
+        } catch (e) {}
+        var typed = el.value !== before
+        var r = el.getBoundingClientRect()
+        var top = document.elementFromPoint(Math.round(r.left + r.width / 2), Math.round(r.top + r.height / 2))
+        return { focused: ok, typed: typed, hitSelf: top === el, value: el.value,
+                 shellInteractive: (typeof window.__petShellEvaluate === 'function')
+                   ? window.__petShellEvaluate(Math.round(r.left + r.width / 2), Math.round(r.top + r.height / 2)) : null }
+      })()`)
+      add(out.panelFocusAfterInput === true,
+        '★ 菜单里出现真正的输入框时，窗口立刻被设为**可激活**（这是原来漏掉的那一环）',
+        '主进程收到的面板焦点 = ' + JSON.stringify(out.panelFocusAfterInput) +
+        '（修复前：清单里的 .dshwv-usagepanel 在 0.3.17 里根本不存在，永远命中不了）')
+      add(out.mechFocus && out.mechFocus.focused === true && out.mechFocus.typed === true,
+        '★ 这个输入框**能聚焦、键盘打得进去**（value 真的变了）',
+        JSON.stringify(out.mechFocus))
+      // 收尾：把探针输入框删掉，别影响后面的用例
+      await js(`(function(){ var e=document.querySelector('.dshpet-probe-input'); if(e&&e.parentNode) e.parentNode.removeChild(e); return true })()`)
+      await sleep(700)
+      out.panelFocusAfterRemove = lastPanelFocus
+      add(out.panelFocusAfterRemove === false,
+        '★ 输入框收掉之后，窗口**恢复**成"不可激活"（平时点她不抢焦点）',
+        '收掉后的面板焦点 = ' + JSON.stringify(out.panelFocusAfterRemove))
+
+      if (pan && pan.fields && pan.fields.length) {
+        // ① 每个控件都必须是"点得到自己"的（elementFromPoint 命中它）
+        const badHit = pan.fields.filter((f) => !f.hitInside)
+        add(badHit.length === 0,
+          '★ 记账界面里的每个控件，指针点上去命中的就是它自己（没有被别的层盖住 / 没有被穿透）',
+          '命中不了的=' + JSON.stringify(badHit))
+        // ② 面板开着时窗口必须"可交互"，否则点击根本到不了页面
+        const badInt = pan.fields.filter((f) => f.shellInteractive !== true)
+        add(badInt.length === 0,
+          '★ 面板开着时这些控件的位置上，窗口是**可交互**的（不穿透）',
+          '不可交互的=' + JSON.stringify(badInt.map((f) => ({ cls: f.cls, at: [f.x, f.y], shell: f.shellInteractive }))))
+      }
+
+      // ④ **反向**：把菜单整个关掉之后，必须恢复成"不可激活"（平时点她不抢焦点）
+      await js(`(function () {
+        var m = document.querySelector('.dshwv-menu')
+        if (m) m.classList.remove('dshwv-menu-open')
+        return true
+      })()`)
+      await sleep(900)
+      out.menuClosed = await js(`!!document.querySelector('.dshwv-menu.dshwv-menu-open')`)
+      out.panelFocusAfterClose = lastPanelFocus
+      add(out.menuClosed === false && out.panelFocusAfterClose === false,
+        '★ 菜单/界面收掉之后，窗口**恢复**成"不可激活"（平时点她不抢焦点）',
+        '菜单还开着=' + out.menuClosed + ' 面板焦点=' + JSON.stringify(out.panelFocusAfterClose))
+    } catch (err) {
+      add(false, 'accounting 探针抛异常', err && err.message)
+    }
+    out.checks = checks
+    return out
+  }
   // —— 小鲸鱼挂件 0.3.10 的几项修复/新增，逐条验 ——
   if (FOCUS === 'v310') {
     return await win.webContents.executeJavaScript(`(async () => {

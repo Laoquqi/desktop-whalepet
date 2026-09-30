@@ -13705,7 +13705,12 @@ function bubblePreviewInto(container, mods, widthPx) {
 function whaleClick() {
   try {
     if (!bubbleOn) return
-    if (bubbleScene && (bubbleScene.kind === 'cost' || bubbleScene.kind === 'alert')) return // 消耗/预警提醒期间点鲸鱼不动作(点泡泡才关)
+    // 【桌宠移植补丁】原版这里是「消耗/预警提醒期间点鲸鱼不动作(点泡泡才关)」。
+    //   但桌宠里用户点的是**立绘**，很难精准点到气泡 —— 于是表现成
+    //   「点桌宠完全没反应、像卡死」（用户实测反馈）。
+    //   改成：点一下就关掉，行为与「点泡泡」一致。
+    if (bubbleScene && bubbleScene.kind === 'alert') { hideUsageAlertBubble(); return }
+    if (bubbleScene && bubbleScene.kind === 'cost') { hideCostBubble(); return }
     if (!bubbleShown) {
       bubbleRoundOn = true
       bubbleSeqIdx = 0
@@ -13794,7 +13799,7 @@ function hideCostBubble() {
 }
 // —— 系统泡泡优先队列:今日预算(1) > 余额预警(2) > 本轮消耗(3) ——
 // 同批(约 30ms 窗口内)触发的多个系统泡泡按等级依次展示;已展示项结束(关闭/超时)再播下一项
-var USAGE_ALERT_TTL = 6500 // 提醒泡泡停留毫秒数
+var USAGE_ALERT_TTL = 5000 // 【桌宠移植补丁】提醒泡泡停留毫秒数：6500 → 5000（用户要求 5 秒自动消失）
 var whaleSysQueue = []
 var whaleSysItem = null // 当前正展示的 {kind, mods/amount, rank}
 var whaleSysTimer = null

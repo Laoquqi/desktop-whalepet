@@ -117,11 +117,18 @@
     // ① 被抓现行时 rice 那边的"被砸到头"贴图优先（它由 rice-role.js 管）
     if (window.__dshpetSpriteOverride) return window.__dshpetSpriteOverride
     if (!cfg.on || disabledReason) return null      // 不接管
-    if (exhausted) return IMG.exhausted
+    // ⚠️⚠️ **互动状态必须排在「疲惫」前面 —— 这是用户报的"点桌宠没反应"的根因。**
+    //    疲惫本来是"没事干时那张脸"（余额低就一脸累），但上一版把它放在最前面，
+    //    于是余额一低（实测余额 4.91 < 阈值 5）就**把所有互动都盖住了**：
+    //      连点 18 下不生气、按住不害羞、换角色也看不出来 ——
+    //      用户看到的就是"点击桌宠无反应"，还以为是卡死了。
+    //    正确优先级：先"正在发生的互动"（生气/失落/害羞/被抚摸），
+    //    这些都没有时才轮到"平时那张脸"（疲惫 → 普通）。
     if (mood === 'angry') return IMG.angry
     if (mood === 'disappointed') return IMG.disappointed
     if (mood === 'shy') return IMG.shy
     if (pressing) return IMG.stroking
+    if (exhausted) return IMG.exhausted
     return baseSrc || IMG.main
   }
 
