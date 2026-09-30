@@ -460,6 +460,13 @@ function makePetWindow(port, primary) {
     width: PET_WIN_W, height: PET_WIN_H,
     transparent: true,
     frame: false,
+    // ⚠️ **thickFrame 必须关**：Windows 无边框窗口默认带 WS_THICKFRAME（隐形
+    //    缩放边框 + DWM 阴影），可见内容会比 getBounds 的外框**内缩约 1px**——
+    //    立绘钉在客户区右下，于是"贴右下角"永远差那么一丝（红底实测：红区
+    //    距屏幕右缘/任务栏顶各差 1~2 物理px）。关掉后可见区域与外框一致，
+    //    立绘实贴屏幕右缘/任务栏上沿。代价只是失去 DWM 阴影（透明窗口本来
+    //    不可见）和系统缩放框（resizable 已是 false），无功能影响。
+    thickFrame: false,
     resizable: false,
     movable: false,
     minimizable: false,
