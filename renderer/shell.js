@@ -164,6 +164,15 @@
       var ep = document.querySelector('.dshpet-exp-panel')
       if (ep && getComputedStyle(ep).display !== 'none') return true
     } catch (err) {}
+    // ⚠️ **小鲸鱼 ☰ 菜单开着的时候，整窗也要接收鼠标事件。**
+    //    挂件本来就有"点菜单外面收起菜单"的逻辑（onDocPointerDown，
+    //    菜单内部/各面板/按钮都已豁免），但空白处是穿透的 —— 点击直接落到
+    //    桌面上，页面收不到，那条逻辑永远等不到事件。与上面两个面板同一条
+    //    道理：菜单开着 → 整窗接管；第一下点击要么点在菜单里、要么把菜单
+    //    关掉，关掉后下一次判定立刻恢复穿透。
+    try {
+      if (document.querySelector('.dshwv-menu.dshwv-menu-open')) return true
+    } catch (err) {}
     var el = null
     try { el = document.elementFromPoint(x, y) } catch (err) {}
     if (isPanelElement(el)) return true
