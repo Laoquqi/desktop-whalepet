@@ -395,8 +395,16 @@
     var okP = await loadScript('/drag-physics.js')
     // 把「偷吃白饭」的浮动小标签收进鲸鱼菜单
     await loadScript('/rice-entry.js')
-    // 二级/三级菜单居中 + 可拖动（在 rice-entry 之后 —— 它要能看到 rice 的面板）
-    await loadScript('/panel-center.js')
+    // ⚠️ 面板居中模块**已停用**（2026-09-30）。
+    //    试了两版都出了问题：
+    //      第一版：只列了 rice/exp 面板，一个挂件面板都没匹配到 → 看起来"没改"
+    //      第二版：把挂件面板加进来，但居中用错了坐标系（fixed 元素要按**视口**算，
+    //              我用了屏幕尺寸）→ 面板被推到窗口外（"往桌面边上瞬移"）；
+    //              而且强制 transform:none 也打乱了部分面板自己的布局。
+    //    用户明确要求改回原样，所以这里**不再加载**。文件保留，方便以后重做。
+    //    （重做时要注意：① 用视口尺寸算坐标 ② 不要动 transform
+    //      ③ 面板跟 ☰ 菜单有位置关联，直接搬走可能破坏交互）
+    // await loadScript('/panel-center.js')
     await loadScript('/menu-extras.js')
     // 米粒面板版面修补：按行打类名（带单位的行永远不换行）
     await loadScript('/rice-layout.js')
