@@ -553,6 +553,33 @@ function makePetWindow(port, primary) {
   w.webContents.on('did-finish-load', () => {
     try { sendSpawnSpot(w) } catch (err) {}
     broadcastPetCount()
+    // ⚠️⚠️ **页面每次加载完都要重置穿透状态，破掉"两边缓存都说没变"的死锁。**
+    //
+    //    用户报：点托盘「重新加载挂件」后，点桌宠怎么点都没反应。
+    //    日志证据（决定性）：重载后只有一句
+    //        穿透状态 → 穿透
+    //    之后再**没有任何**穿透状态变化 —— 说明渲染端再也没下发过。
+    //
+    //    原因：主进程和渲染端**各有一个**穿透缓存，都是"值没变就跳过"：
+    //        main.cjs:  if (interactiveOf.get(w) === on) return
+    //        shell.js:  if (on === lastInteractive) return
+    //    重载后渲染端的 lastInteractive 重置了，但**主进程的 interactiveOf 没清** ——
+    //    两边都认为"还是穿透，不用下发" → 窗口永远停在穿透 → 点不了。
+    //
+    //    这里照搬"让路恢复"那套破死锁手法：
+    //      ① 清主进程缓存
+    //      ② 强制接管一次（下一次 mousemove 一定能到渲染端）
+    //      ③ 通知渲染端也清缓存，按**真实指针位置**重新判定
+    //    放在 did-finish-load 里 —— **任何原因的重载都能自愈**，不只是那个菜单项。
+    try {
+      if (!w.isDestroyed()) {
+        interactiveOf.delete(w)
+        w.setIgnoreMouseEvents(false)
+        interactiveOf.set(w, true)
+        try { w.webContents.send('pet:reeval-interactive') } catch (err) {}
+        log('页面加载完成 → 重置穿透状态（破缓存死锁）')
+      }
+    } catch (err) {}
   })
 
   // 页面从本地服务加载（同源），而不是 file://
