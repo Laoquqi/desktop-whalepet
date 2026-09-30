@@ -395,13 +395,14 @@
     var okP = await loadScript('/drag-physics.js')
     // 把「偷吃白饭」的浮动小标签收进鲸鱼菜单
     await loadScript('/rice-entry.js')
-    // 挂件自带的面板整体往左移，避免和一级菜单（☰）重合。
-    // ⚠️ 只改 margin-left（相对位移），**不动** left/top/transform ——
-    //    上一版"居中"方案就是因为改 left 成绝对坐标（fixed 元素相对视口，
-    //    我却用屏幕尺寸算）把面板推到窗口外，还强制 transform:none 打乱了布局。
-    //    这一版沿用 rice-entry.js 里验证过的"改 margin-left，不改 left"。
-    //    范围只含挂件自带面板，不含 rice（偷吃白饭）/ 形象与互动 / 一级菜单。
-    await loadScript('/panel-shift.js')
+    // ⚠️ 面板左移模块**已停用**（2026-09-30，用户第二次要求回退）。
+    //    用户反馈："每次都只改'自定义'" —— 说明只有 .dshwv-fontmenu /
+    //    .dshwv-rgbmenu / .dshwv-qcolmenu 这三个生效，其它面板没反应
+    //    （它们大概不是 position:fixed，或者被外层容器定位，
+    //     在面板自己身上加 margin-left 不起作用）。
+    //    结果就是"只动了自定义菜单"—— 用户不想要这个效果。已全部恢复原状。
+    //    文件保留；以后要做先搞清楚各面板的真实定位方式（先加只读诊断）。
+    // await loadScript('/panel-shift.js')
     await loadScript('/menu-extras.js')
     // 米粒面板版面修补：按行打类名（带单位的行永远不换行）
     await loadScript('/rice-layout.js')
