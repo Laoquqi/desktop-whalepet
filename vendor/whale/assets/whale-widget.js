@@ -16997,7 +16997,16 @@ fetch(SIZE_URL, { cache: 'no-store' })
     refresh(false)
     dshwvToast('⚠ 设置读取失败，已暂停保存以免覆盖你的原有设置<br>请刷新页面重试')
   })
-setInterval(function () { refresh(false); try { loadApiModels(null, true) } catch (err) {} }, REFRESH_MS)
+// 【桌宠移植补丁】原版是
+//     setInterval(function () { refresh(false); loadApiModels(null, true) }, REFRESH_MS)
+//   —— 每 60 秒连**模型列表**也一起强制重拉。那会打十来个外部接口
+//   （modelscope / cerebras / deepinfra / fireworks / groq / hunyuan / kimi /
+//     minimax / mistral / moonshot …），而模型列表几乎不变，纯属浪费。
+//   用户报「接入 api 后多次点击桌宠会消耗 token」——
+//   这类**自动轮询外部接口**是最可疑的来源，先把它去掉：
+//   只保留余额刷新（那是 DeepSeek 的 user/balance，免费且轻），
+//   模型列表改为只在启动时拉一次、用户手动点刷新时才重拉。
+setInterval(function () { refresh(false) }, REFRESH_MS)
 
 // —— 每轮对话消耗检测：轮询 last-turn.json，出现新 seq 时弹消耗金额泡泡 ——
 var LAST_TURN_URL = '/dsh-whale/last-turn.json'
