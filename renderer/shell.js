@@ -211,7 +211,15 @@
   window.addEventListener('mousemove', update, true)
   // 指针离开窗口 → 恢复穿透
   window.addEventListener('mouseleave', function () { setInteractive(false) })
-  window.addEventListener('blur', function () { setInteractive(false) })
+  // ⚠️⚠️ **绝对不要监听 `blur` 去切穿透。**（原来这里有一句，已删）
+  //    `blur` 不只是"用户点到别处"，**打开托盘菜单、打开设置窗口、开开发者工具**
+  //    都会让桌宠窗口 blur —— 于是每次点托盘菜单，窗口都被切成"穿透"。
+  //    而穿透状态靠 setIgnoreMouseEvents(true,{forward:true}) 转发 mousemove
+  //    来重新判定，这台机器上转发**没生效** → 渲染端再也收不到 mousemove →
+  //    两边缓存都停在 false → **永远穿透 = 怎么点都没反应**
+  //    （用户报的"点托盘菜单后卡死"，日志实测：切到穿透后 2 分钟没有任何状态变化）。
+  //    "指针离开窗口"这一件事 `mouseleave` 已经覆盖了，`blur` 是多余且有害的。
+  //    主进程那边还有一道保险：托盘菜单操作后会重新武装（见 keepOpen）。
 
   // ⚠️⚠️ **主进程要求"重新评估穿透"时必须真的重新下发。**
   //    背景（用户报"全屏视频进出后点不了"）：

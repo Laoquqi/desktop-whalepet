@@ -1399,8 +1399,44 @@ function buildTray() {
     //    原生托盘菜单**无法同时做到"保持打开"和"保持原位"** —— 这是系统菜单，
     //    没有位置参数。要那个效果只能自绘一个菜单窗口（另一个专项）。
     //    所以这里只保留"统一包一层错误捕获"，不再重新弹出。
+    // ⚠️⚠️ **托盘菜单操作后必须重新武装桌宠的鼠标交互。**
+    //
+    //    用户报："点击托盘菜单的功能（设置 API Key / 回到右下角 / 重新加载挂件 /
+    //    强制鼠标穿透 等等）后，点桌宠怎么点都没反应。"
+    //
+    //    日志证据（决定性）：某次运行里
+    //        15:08:01  穿透状态 → 穿透     ← 之后 2 分钟到退出，再没有任何状态变化
+    //    说明渲染端再也没下发过穿透状态。
+    //
+    //    原因链：
+    //      ① 打开托盘菜单 / 设置窗口时，桌宠窗口会 **blur**
+    //      ② 渲染端有 window.addEventListener('blur', () => setInteractive(false))
+    //         → 窗口切成"穿透"
+    //      ③ 穿透状态靠 setIgnoreMouseEvents(true,{forward:true}) 转发 mousemove
+    //         来重新判定，但这台机器上转发**没生效** → 渲染端再也收不到 mousemove
+    //      ④ 两边缓存都停在 false → 谁都不下发 → **永远穿透** = 点不了
+    //
+    //    修法（和"让路恢复"同一套破死锁手法，且对所有菜单项生效）：
+    //      ① 清主进程缓存  ② 强制接管一次（保证下一次 mousemove 能到渲染端）
+    //      ③ 通知渲染端清缓存、按真实指针位置重新判定
+    function rearmPetInteractivity() {
+      for (const w of pets) {
+        try {
+          if (!w || w.isDestroyed()) continue
+          interactiveOf.delete(w)
+          w.setIgnoreMouseEvents(false)
+          interactiveOf.set(w, true)
+          try { w.webContents.send('pet:reeval-interactive') } catch (err) {}
+        } catch (err) {}
+      }
+      log('托盘菜单操作后 → 重新武装鼠标交互')
+    }
+
     const keepOpen = (fn) => (...a) => {
       try { fn(...a) } catch (err) { log('托盘菜单项出错', err && err.message) }
+      // 菜单关闭 + 动作生效之后再武装（给 reload / 打开设置窗口留一点时间）
+      setTimeout(() => { try { rearmPetInteractivity() } catch (err) {} }, 150)
+      setTimeout(() => { try { rearmPetInteractivity() } catch (err) {} }, 1500)
     }
     const menu = Menu.buildFromTemplate([
       { label: '显示 / 隐藏', click: keepOpen(() => { if (!win) return; win.isVisible() ? win.hide() : win.showInactive() }) },
