@@ -113,36 +113,23 @@
     var lx = Math.floor((x - r.left) / r.width * HIT_SIZE)
     var ly = Math.floor((y - r.top) / r.height * HIT_SIZE)
     if (lx < 0 || ly < 0 || lx >= HIT_SIZE || ly >= HIT_SIZE) return false
-    var root = document.querySelector('.dshwv-root')
-    if (root && root.classList.contains('dshwv-left')) lx = HIT_SIZE - lx
-    if (lx < 0 || lx >= HIT_SIZE) return false
-    // ⚠️⚠️ **容错：查一个半径 R 的邻域，而不是单个像素。**
+    // ⚠️⚠️ **矩形内一律算命中 —— 不再逐像素查 alpha。**
     //
-    //    用户报"点桌宠没反应、怎么点都没反应"。加探针后实测：
-    //        穿透判定: (750,720) → false | 拖动标志=false 强制穿透=false elementFromPoint=BODY
-    //    拖动标志没卡、强制穿透是关的 —— **卡在最后这一步像素判定上**。
+    //    历史：原来这里是查立绘的像素 alpha（透明处不接管），意图是"只有点在
+    //    鲸鱼身上才接管，点到她周围的透明区就穿透"。理论很好，实测不行：
     //
-    //    原因：立绘贴图有**大片透明留白**，而且动画换帧时尺寸会变
-    //    （日志实测：223x223 ↔ 229x208）—— 同一坐标的像素**忽明忽暗**，
-    //    于是"第一次点到不透明像素有反应、第二次点到透明处就没反应"。
-    //    立绘又只有 223px 左右，用户很难每次都精确点在鲸鱼身上。
+    //      · 立绘贴图有**大片透明留白**，而且**动画换帧时尺寸会变**
+    //        （探针日志实测：223x223 / 224x220 / 229x208 来回换）
+    //      · 于是同一坐标的像素**忽明忽暗**，用户看到的是
+    //        "第一次点有反应、第二次就没反应"
+    //      · 探针日志（决定性）：
+    //            (765,699) → true     ← 点在鲸鱼身上
+    //            (754,703) → false    ← 只差 11px，落到透明处
+    //        立绘只有 223px，**要求用户每次精确点到不透明像素不现实**
     //
-    //    加半径后：点附近 R 个命中图像素内只要有一个不透明就算命中。
-    //    代价：立绘边缘的透明区也会变得可点 —— 相对于"点不动"，这个代价可接受。
-    //    ⚠️ 半径单位是**命中图像素**，而 HIT_SIZE=610、立绘约 223px ——
-    //       1 个命中图像素 ≈ 0.37 个实际像素。所以半径要给得够大：
-    //       24 命中图像素 ≈ 9 实际像素，是个手感合适的容错。
-    var HIT_TOL = 24
-    for (var hy = -HIT_TOL; hy <= HIT_TOL; hy++) {
-      var ny = ly + hy
-      if (ny < 0 || ny >= HIT_SIZE) continue
-      for (var hx = -HIT_TOL; hx <= HIT_TOL; hx++) {
-        var nx = lx + hx
-        if (nx < 0 || nx >= HIT_SIZE) continue
-        if (hitPixels[(ny * HIT_SIZE + nx) * 4 + 3] > 10) return true
-      }
-    }
-    return false
+    //    所以：**矩形内一律算命中**。代价是立绘四角的透明区也会变得可点 ——
+    //    相对于"点不动、像卡死"，这个代价完全值得。
+    return true
   }
   // 暴露给自检用（带项目前缀，不污染全局命名空间）
   window.__petWhaleHit = whaleHit
