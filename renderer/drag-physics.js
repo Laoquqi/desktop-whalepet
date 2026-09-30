@@ -2105,17 +2105,14 @@
                     base: SLINGSHOT_BASE_SPEED, deform: SLINGSHOT_MAX_DEFORMATION },
     },
     // 给自检用：立绘偏移与可达范围（用来验证"立绘能贴到屏幕四边"）
-    // ⚠️ 小窗口架构：返回**相对窗口原点**的立绘偏移（ dx = 根在窗口内的
-    //    偏移 + 立绘在根内的偏移）—— 这样 "physPos + dx/dy" 就是立绘的
-    //    **屏幕**位置，与 bounds() 同一口径（自检断言全按这个口径算）。
-    _artOffset: function () {
-      var a = artOffset()
-      var rootW = root ? root.offsetWidth : 375
-      var rootH = root ? root.offsetHeight : rootW
+    // ⚠️ 小窗口架构：_artOffset 保持**根相对**（和原来一致）；
+    //    "立绘的屏幕位置 = physPos + _rootOffset() + _artOffset()"。
+    //    _rootOffset = 根在窗口内的偏移（根钉在窗口右下：right:0;bottom:0）。
+    _artOffset: function () { return artOffset() },
+    _rootOffset: function () {
       return {
-        dx: (window.innerWidth - rootW) + a.dx,
-        dy: (window.innerHeight - rootH) + a.dy,
-        w: a.w, h: a.h,
+        x: window.innerWidth - (root ? root.offsetWidth : 375),
+        y: window.innerHeight - (root ? root.offsetHeight : 375),
       }
     },
     _bounds: function () { return bounds() },

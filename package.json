@@ -1,8 +1,8 @@
 {
   "name": "dafatfish-pet",
   "productName": "大肥鱼桌宠",
-  "version": "0.3.16-mod",
-  "description": "把小鲸鱼余额挂件（dsh-whale-widget 0.3.16）做成桌面宠物，并合入「偷吃白饭」（dsh-rice-widget 0.3.4）的功能",
+  "version": "0.3.17-mod",
+  "description": "把小鲸鱼余额挂件（dsh-whale-widget 0.3.17）做成桌面宠物，并合入「偷吃白饭」（dsh-rice-widget 0.3.4）的功能",
   "private": true,
   "type": "module",
   "main": "main.cjs",

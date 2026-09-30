@@ -1,6 +1,6 @@
 # 大肥鱼桌宠
 
-把小鲸鱼余额挂件 **[dsh-whale-widget](https://github.com/MeteorNOX/DeepSeek-Balance-Whale-Widget) 0.3.16**
+把小鲸鱼余额挂件 **[dsh-whale-widget](https://github.com/MeteorNOX/DeepSeek-Balance-Whale-Widget) 0.3.17**
 做成一只**桌面宠物**，并合入 **dsh-rice-widget 0.3.4** 的「偷吃白饭」玩法。
 
 > ### ⚠️ 署名（上游要求，请勿删除）
@@ -52,7 +52,7 @@ npm run test:host                 # 只测宿主：路由 / 信任栅栏 / 异�
 
 ## 二、它做了什么
 
-### 2.1 底座：官方挂件 0.3.16（功能全保留）
+### 2.1 底座：官方挂件 0.3.17（功能全保留）
 
 余额 / 今日已用 / 峰谷定价、自定义泡泡点击序列、逐行样式与字体、悬浮快捷编辑、
 音效与每轮消耗、自定义角色 / 动图 / 音效、吸附与翻转 —— 与网页版**同一份代码**。

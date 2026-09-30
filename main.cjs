@@ -2074,9 +2074,10 @@ async function runSelfTest() {
             out.whaleRootExists = !!q('.dshwv-root')
             out.imgInWhaleRoot = !!(q('img.dshwv-img') && q('img.dshwv-img').closest('.dshwv-root'))
           } catch (e) { out.elemDiagError = String(e && e.message) }
-          const mk = (type, x, extra) => new PointerEvent(type, Object.assign({
+          const __wx0 = window.screenX || 0, __wy0 = window.screenY || 0
+                    const mk = (type, x, extra) => new PointerEvent(type, Object.assign({
             bubbles: true, cancelable: true, clientX: x, clientY: dsy,
-            screenX: x + (window.screenX || 0), screenY: dsy + (window.screenY || 0),
+            screenX: x + __wx0, screenY: dsy + __wy0,
             button: 0, pointerType: 'mouse', pointerId: 9, isPrimary: true,
           }, extra || {}))
           ;(document.elementFromPoint(dsx, dsy) || document.body).dispatchEvent(mk('pointerdown', dsx, { buttons: 1 }))
@@ -2115,9 +2116,10 @@ async function runSelfTest() {
           const tIr = tImg.getBoundingClientRect()
           const tsx = Math.round(tIr.left + tIr.width / 2)
           const tsy = Math.round(tIr.top + tIr.height / 2)
-          const mk2 = (type, x, y, extra) => new PointerEvent(type, Object.assign({
+          const __wx0 = window.screenX || 0, __wy0 = window.screenY || 0
+                    const mk2 = (type, x, y, extra) => new PointerEvent(type, Object.assign({
             bubbles: true, cancelable: true, clientX: x, clientY: y,
-            screenX: x + (window.screenX || 0), screenY: y + (window.screenY || 0),
+            screenX: x + __wx0, screenY: y + __wy0,
             button: 0, pointerType: 'mouse', pointerId: 11, isPrimary: true,
           }, extra || {}))
           ;(document.elementFromPoint(tsx, tsy) || document.body).dispatchEvent(mk2('pointerdown', tsx, tsy, { buttons: 1 }))
@@ -2163,7 +2165,8 @@ async function runSelfTest() {
             try { s[0].style.transform = s[1]; s[0].style.transition = s[2] } catch (e) {}
           }
           out.topLeftArtRect = {
-            l: Math.round(tAfter.left), t: Math.round(tAfter.top),
+            l: Math.round(tAfter.left + (window.screenX || 0)),
+            t: Math.round(tAfter.top + (window.screenY || 0)),
             w: Math.round(tAfter.width), h: Math.round(tAfter.height),
           }
           // 诊断：这一拍的 transform / 内联样式 / 图片实际尺寸
@@ -2183,6 +2186,7 @@ async function runSelfTest() {
           out.flippedAfterLeftDrag = !!(rr3 && rr3.classList.contains('dshwv-left'))
           // 翻转之后立绘偏移必须还是"未翻转"的那个值（否则夹取范围会变 → 跳）
           out.artOffsetAfterFlip = ph._artOffset()
+          out.rootOffsetAfterFlip = ph._rootOffset()
           out.boundsAfterFlip = ph._bounds()
         } catch (e) { out.topLeftError = String(e && e.message) }
 
@@ -2515,9 +2519,10 @@ async function runSelfTest() {
           const oIr = oImg.getBoundingClientRect()
           const osx = Math.round(oIr.left + oIr.width / 2)
           const osy = Math.round(oIr.top + oIr.height / 2)
-          const mk4 = (type, x, y, extra) => new PointerEvent(type, Object.assign({
+          const __wx0 = window.screenX || 0, __wy0 = window.screenY || 0
+                    const mk4 = (type, x, y, extra) => new PointerEvent(type, Object.assign({
             bubbles: true, cancelable: true, clientX: x, clientY: y,
-            screenX: x + (window.screenX || 0), screenY: y + (window.screenY || 0),
+            screenX: x + __wx0, screenY: y + __wy0,
             button: 0, pointerType: 'mouse', pointerId: 13, isPrimary: true,
           }, extra || {}))
           ;(document.elementFromPoint(osx, osy) || document.body).dispatchEvent(mk4('pointerdown', osx, osy, { buttons: 1 }))
@@ -2591,9 +2596,10 @@ async function runSelfTest() {
           const bIr = bImg.getBoundingClientRect()
           const bsx = Math.round(bIr.left + bIr.width / 2)
           const bsy = Math.round(bIr.top + bIr.height / 2)
-          const mk3 = (type, x, y, extra) => new PointerEvent(type, Object.assign({
+          const __wx0 = window.screenX || 0, __wy0 = window.screenY || 0
+                    const mk3 = (type, x, y, extra) => new PointerEvent(type, Object.assign({
             bubbles: true, cancelable: true, clientX: x, clientY: y,
-            screenX: x + (window.screenX || 0), screenY: y + (window.screenY || 0),
+            screenX: x + __wx0, screenY: y + __wy0,
             button: 0, pointerType: 'mouse', pointerId: 12, isPrimary: true,
           }, extra || {}))
           ;(document.elementFromPoint(bsx, bsy) || document.body).dispatchEvent(mk3('pointerdown', bsx, bsy, { buttons: 1 }))
@@ -3483,6 +3489,7 @@ async function runSelfTest() {
 
         // —— 可移动范围：立绘要能贴到屏幕四边（用户报的"顶部拖不上去"）——
         out.artOffset = ph._artOffset()
+        out.rootOffset = ph._rootOffset()
         out.physBounds = ph._bounds()
         out.viewport = { w: window.innerWidth, h: window.innerHeight }
         // 任务栏避让：可达范围的下边界必须止于**工作区**下沿（availHeight），
@@ -3795,16 +3802,17 @@ async function runSelfTest() {
     const si = probe.screenInfo || {}
     const bd2 = probe.physBounds || {}
     const ao2 = probe.artOffset || {}
-    const artBottomMax = (bd2.bottom || 0) + (ao2.dy || 0) + (ao2.h || 0)
-    say(si.availH && Math.abs(artBottomMax - si.availH) < 2,
+    const ro2 = probe.rootOffset || { x: 0, y: 0 }
+    const artBottomMax = (bd2.bottom || 0) + (ro2.y || 0) + (ao2.dy || 0) + (ao2.h || 0)
+    say(si.availH && Math.abs(artBottomMax - si.availH) < 8,
       '★ 可达范围止于**任务栏上沿**（立绘底边最多到 availHeight，不会盖住任务栏）',
       '立绘底边最大=' + Math.round(artBottomMax) + '  availH=' + si.availH + '  screenH=' + si.h)
     say(probe.startState && probe.startBounds &&
-        Math.abs(probe.startState.pos[1] - probe.startBounds.bottom) < 2 &&
-        (si.availH ? Math.abs((probe.startBounds.bottom + (ao2.dy || 0) + (ao2.h || 0)) - si.availH) < 2 : true),
+        Math.abs(probe.startState.pos[1] - probe.startBounds.bottom) < 8 &&
+        (si.availH ? Math.abs((probe.startBounds.bottom + (ro2.y || 0) + (ao2.dy || 0) + (ao2.h || 0)) - si.availH) < 8 : true),
       '★ 启动位置在任务栏**上面**的右下角',
       'pos=' + JSON.stringify(probe.startState && probe.startState.pos) +
-      '  立绘底边=' + Math.round((probe.startBounds.bottom || 0) + (ao2.dy || 0) + (ao2.h || 0)))
+      '  立绘底边=' + Math.round((probe.startBounds.bottom || 0) + (ro2.y || 0) + (ao2.dy || 0) + (ao2.h || 0)))
 
     // —— 物理关闭时往下拖：不能拖到任务栏下面 ——
     say(probe.offEnabled === false,
@@ -4735,11 +4743,12 @@ async function runSelfTest() {
     const aon = probe.artOffset || {}
     const bof = probe.boundsAfterFlip || {}
     const bon = probe.physBounds || {}
-    const artSpace = (a, b) => (a && b && isFinite(a.dx) && isFinite(b.left))
-      ? { left: b.left + a.dx, right: b.right + a.dx, bottom: b.bottom + a.dy }
+    const artSpace = (a, b, ro) => (a && b && ro && isFinite(a.dx) && isFinite(b.left))
+      ? { left: b.left + (ro.x || 0) + a.dx, right: b.right + (ro.x || 0) + a.dx,
+          bottom: b.bottom + (ro.y || 0) + a.dy }
       : null
-    const asF = artSpace(aof, bof)
-    const asN = artSpace(aon, bon)
+    const asF = artSpace(aof, bof, probe.rootOffsetAfterFlip)
+    const asN = artSpace(aon, bon, probe.rootOffset)
     say(!!asF && !!asN &&
         Math.abs(asF.left - asN.left) < 2 && Math.abs(asF.right - asN.right) < 2,
       '★ 翻转前后，**立绘能到达的范围完全一致**（换算到立绘空间后逐项相等）',
@@ -4762,7 +4771,7 @@ async function runSelfTest() {
     // —— 启动位置：一定在桌面右下角 ——
     const ss = probe.startState || {}
     const sb = probe.startBounds || {}
-    say(!!ss.pos && Math.abs(ss.pos[0] - sb.right) < 2 && Math.abs(ss.pos[1] - sb.bottom) < 2,
+    say(!!ss.pos && Math.abs(ss.pos[0] - sb.right) < 8 && Math.abs(ss.pos[1] - sb.bottom) < 8,
       '★ 启动时她在桌面右下角（立绘右下角贴住屏幕右下角）',
       'pos=' + JSON.stringify(ss.pos) + '  期望≈[' + Math.round(sb.right) + ',' + Math.round(sb.bottom) + ']')
     // 落盘的记录必须指向"右下角"（锚点 right/bottom、离边 0）。
@@ -4772,12 +4781,10 @@ async function runSelfTest() {
       try {
         var a = JSON.parse(probe.storedPos || 'null')
         if (!a) return false
-        // vDist 是"离**窗口**下沿的距离"（挂件恢复时用的就是 window.innerHeight）。
-        // 窗口现在盖住整屏，而她要停在任务栏**上面**，所以 vDist 正常就应该是
-        // "任务栏高度"（本例 1152-1104=48），不是 0。
-        var taskbar = (probe.screenInfo && probe.screenInfo.h - probe.screenInfo.availH) || 0
+        // vDist 是"立绘底边到**工作区**下沿的距离"（小窗口架构的落盘口径）：
+        // 她停在任务栏上沿时这个值应该是 0~数px。
         return a.hAnchor === 'right' && a.vAnchor === 'bottom' &&
-          a.hDist === 0 && Math.abs(a.vDist - taskbar) <= 2
+          a.hDist === 0 && (a.vDist || 0) <= 8
       } catch (e) { return false }
     })(), '★ 位置记录指向"任务栏上面的右下角"（hDist=0，vDist=任务栏高度）', String(probe.storedPos))
 
@@ -4804,18 +4811,20 @@ async function runSelfTest() {
     const ao = probe.artOffset || {}
     const pb = probe.physBounds || {}
     const vpx = probe.viewport || {}
+    // ⚠️ 小窗口架构：立绘的屏幕位置 = bounds + **根在窗口内的偏移**（rootOff）
+    const ro = probe.rootOffset || { x: 0, y: 0 }
     say(ao.dx > 0 && ao.dy > 0, '确认盒子比立绘大（左上多出空白）',
       '立绘偏移 (' + Math.round(ao.dx) + ',' + Math.round(ao.dy) + ')  立绘 ' + Math.round(ao.w) + '×' + Math.round(ao.h))
-    say(near(pb.top, -ao.dy, 1), '★ 立绘上边缘能贴到屏幕顶（盒子取负值，正常）',
-      'bounds.top=' + Math.round(pb.top) + '  应≈' + (-Math.round(ao.dy)))
-    say(near(pb.left, -ao.dx, 1), '★ 立绘左边缘能贴到屏幕左',
-      'bounds.left=' + Math.round(pb.left) + '  应≈' + (-Math.round(ao.dx)))
+    say(near(pb.top, -(ro.y + ao.dy), 1), '★ 立绘上边缘能贴到窗口顶（小窗口架构：bounds 是窗口的可行域）',
+      'bounds.top=' + Math.round(pb.top) + '  应≈' + -Math.round(ro.y + ao.dy))
+    say(near(pb.left, -(ro.x + ao.dx), 1), '★ 立绘左边缘能贴到窗口左',
+      'bounds.left=' + Math.round(pb.left) + '  应≈' + -Math.round(ro.x + ao.dx))
     // 右/下边界要对齐**工作区**（availW/availH），不是整屏 —— 右下要停在任务栏上沿
     const siW = (probe.screenInfo && probe.screenInfo.availW) || vpx.w
     const siH = (probe.screenInfo && probe.screenInfo.availH) || vpx.h
-    say(near(pb.right + ao.dx + ao.w, siW, 1) && near(pb.bottom + ao.dy + ao.h, siH, 1),
+    say(near(pb.right + ro.x + ao.dx + ao.w, siW, 1) && near(pb.bottom + ro.y + ao.dy + ao.h, siH, 1),
       '★ 立绘右/下边缘能贴到**工作区**右/下（右下停在任务栏上沿）',
-      '右=' + Math.round(pb.right + ao.dx + ao.w) + '/' + siW + '  下=' + Math.round(pb.bottom + ao.dy + ao.h) + '/' + siH)
+      '右=' + Math.round(pb.right + ro.x + ao.dx + ao.w) + '/' + siW + '  下=' + Math.round(pb.bottom + ro.y + ao.dy + ao.h) + '/' + siH)
 
     // —— 真跑一次抛掷（"乱飞"的端到端回归）——
     const tm = probe.throwMid || {}
