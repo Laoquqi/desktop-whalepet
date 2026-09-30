@@ -459,6 +459,13 @@ function makePetWindow(port, primary) {
     x: b.x + b.width - PET_WIN_W, y: b.y + b.height - PET_WIN_H,
     width: PET_WIN_W, height: PET_WIN_H,
     transparent: true,
+    // ⚠️ **透明窗口必须显式给全透明底色。**
+    //    Electron 文档：`transparent: true` 时如果没设 `backgroundColor`，
+    //    某些平台/显卡组合下窗口会**露出一个不透明的底色**（用户报的
+    //    "桌面右下角有一块红色背景" —— 桌宠窗口那块区域整片变色）。
+    //    `#00000000` 是 8 位十六进制（RGBA），末两位 00 = 全透明。
+    //    注意**不能**写成 `#000000`（那是不透明黑），必须带 alpha。
+    backgroundColor: '#00000000',
     frame: false,
     // ⚠️ **thickFrame 必须关**：Windows 无边框窗口默认带 WS_THICKFRAME（隐形
     //    缩放边框 + DWM 阴影），可见内容会比 getBounds 的外框**内缩约 1px**——
