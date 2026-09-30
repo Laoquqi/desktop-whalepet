@@ -116,7 +116,30 @@
     var root = document.querySelector('.dshwv-root')
     if (root && root.classList.contains('dshwv-left')) lx = HIT_SIZE - lx
     if (lx < 0 || lx >= HIT_SIZE) return false
-    return hitPixels[(ly * HIT_SIZE + lx) * 4 + 3] > 10
+    // ⚠️⚠️ **容错：查一个半径 R 的邻域，而不是单个像素。**
+    //
+    //    用户报"点桌宠没反应、怎么点都没反应"。加探针后实测：
+    //        穿透判定: (750,720) → false | 拖动标志=false 强制穿透=false elementFromPoint=BODY
+    //    拖动标志没卡、强制穿透是关的 —— **卡在最后这一步像素判定上**。
+    //
+    //    原因：立绘贴图有**大片透明留白**，而且动画换帧时尺寸会变
+    //    （日志实测：223x223 ↔ 229x208）—— 同一坐标的像素**忽明忽暗**，
+    //    于是"第一次点到不透明像素有反应、第二次点到透明处就没反应"。
+    //    立绘又只有 223px 左右，用户很难每次都精确点在鲸鱼身上。
+    //
+    //    加半径后：点附近 R 个命中图像素内只要有一个不透明就算命中。
+    //    代价：立绘边缘的透明区也会变得可点 —— 相对于"点不动"，这个代价可接受。
+    var HIT_TOL = 4
+    for (var hy = -HIT_TOL; hy <= HIT_TOL; hy++) {
+      var ny = ly + hy
+      if (ny < 0 || ny >= HIT_SIZE) continue
+      for (var hx = -HIT_TOL; hx <= HIT_TOL; hx++) {
+        var nx = lx + hx
+        if (nx < 0 || nx >= HIT_SIZE) continue
+        if (hitPixels[(ny * HIT_SIZE + nx) * 4 + 3] > 10) return true
+      }
+    }
+    return false
   }
   // 暴露给自检用（带项目前缀，不污染全局命名空间）
   window.__petWhaleHit = whaleHit
