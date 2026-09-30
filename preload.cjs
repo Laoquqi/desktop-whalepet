@@ -104,6 +104,10 @@ contextBridge.exposeInMainWorld('petApi', {
   // 而用户要的"屏幕正中央"在小窗（900×900、钉在右下角）里根本不存在。
   panelOpen: () => ipcRenderer.send('pet:panel-open'),
   panelClose: () => ipcRenderer.send('pet:panel-close'),
+  // 面板打开/关闭时切换窗口的「可激活」状态。
+  // 窗口平时是 setFocusable(false)（点她不抢焦点，避免视频暂停），
+  // 但那样面板里的输入框/下拉拿不到键盘焦点 —— 打开面板时临时放开。
+  panelFocus: (want) => ipcRenderer.send('pet:panel-focus', !!want),
   // 主进程碰撞世界下发的冲量 + 位置分离（20Hz）
   onImpulse: (fn) => ipcRenderer.on('pet:impulse', (e, d) => { try { fn(d) } catch (err) {} }),
   // 桌宠互撞的冲量转发：撞人的那只把自己该给同伴的份额发过来，

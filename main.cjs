@@ -811,6 +811,26 @@ ipcMain.on('pet:renderer-ready', (e) => {
 //    以及让路的 pet:move-window 一样处理 —— 用 __panelExpanded 标记。
 let panelSavedBounds = null
 
+// ⚠️⚠️ **面板打开时临时允许窗口被激活。**
+//
+//    背景：窗口建的时候调过 `setFocusable(false)`（为了修"点桌宠抢焦点导致
+//    视频/直播暂停"）。Windows 上这会给窗口加 WS_EX_NOACTIVATE ——
+//    **窗口拿不到键盘焦点**，于是面板里的 `<input>` 打不了字、`<select>`
+//    拉不出来（用户报的"小鲸鱼记账里的输入框和选择栏都无法正常使用"），
+//    有些面板还会因为拿不到焦点进入奇怪状态（表现为"点了没反应/卡死"）。
+//
+//    修法：**只在挂件面板打开期间**放开可激活，面板一关立刻收回。
+//    两边都保住：平时点桌宠依然不抢焦点（视频不暂停），
+//    面板打开时输入框/下拉能正常用。
+ipcMain.on('pet:panel-focus', (e, want) => {
+  try {
+    const w = BrowserWindow.fromWebContents(e.sender)
+    if (!w || w.isDestroyed()) return
+    w.setFocusable(!!want)
+    log('面板焦点 → ' + (want ? '可激活（输入框/下拉可用）' : '不可激活（点她不抢焦点）'))
+  } catch (err) {}
+})
+
 ipcMain.on('pet:panel-open', (e) => {
   try {
     const w = BrowserWindow.fromWebContents(e.sender)

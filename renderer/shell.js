@@ -402,7 +402,9 @@
     //     在面板自己身上加 margin-left 不起作用）。
     //    结果就是"只动了自定义菜单"—— 用户不想要这个效果。已全部恢复原状。
     //    文件保留；以后要做先搞清楚各面板的真实定位方式（先加只读诊断）。
-    // await loadScript('/panel-shift.js')
+    // 面板打开时临时允许窗口被激活 —— 否则面板里的输入框/下拉用不了
+    // （窗口设了 setFocusable(false)，Windows 上拿不到键盘焦点）
+    await loadScript('/panel-focus.js')
     await loadScript('/menu-extras.js')
     // 米粒面板版面修补：按行打类名（带单位的行永远不换行）
     await loadScript('/rice-layout.js')
