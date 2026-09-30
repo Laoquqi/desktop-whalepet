@@ -2565,7 +2565,7 @@ async function runSelfTest() {
             hasBuildHead: rtxt.indexOf('buildHeadCss') >= 0,
             // 桌宠版**保持上游默认值 10**（两套翻碗动画都按上游来：
             // 抓现行大概率倒扣在旁边地面，10% 撞上头顶；被彩蛋炸到必定上头顶）。
-            headChanceDefault: rtxt.indexOf('headChancePct: 50') >= 0,
+            headChanceDefault: rtxt.indexOf('headChancePct: 70') >= 0,
             hasHeadChanceKey: rtxt.indexOf('headChancePct') >= 0,
             headChanceSnippet: (function () {
               var out2 = []
@@ -4000,7 +4000,7 @@ async function runSelfTest() {
       'openDshWeb 可用=' + probe.hasOpenDshWebApi + '  参考端口=' + probe.openWebHintPort)
 
     say(probe.riceHeadMachinery === true,
-      '★ 米粒用的是上游 0.3.7 的两套翻碗动画（dshrice-spill + dshrice-head，headChancePct 已按要求改成 50）',
+      '★ 米粒用的是上游 0.3.7 的两套翻碗动画（dshrice-spill + dshrice-head，headChancePct 已按要求改成 70）',
       JSON.stringify(probe.riceHeadInfo))
     say(probe.spillAnimFound === true, '找到翻碗动画（Web Animations API）',
       '时长 ' + probe.spillAnimDuration + 'ms，页面上共 ' + probe.spillAnimCount + ' 个动画')
