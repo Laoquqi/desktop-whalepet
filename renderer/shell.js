@@ -138,6 +138,8 @@
   var lastX = -1
   var lastY = -1
   var forced = false          // 托盘强制穿透
+  var evalLastResult = null   // 诊断：上次的判定结果（只在变化时打日志）
+  var dragFlagLogged = false  // 诊断：拖动标志卡住的告警只打一次
 
   function setInteractive(on) {
     on = !!on
@@ -176,7 +178,19 @@
     var el = null
     try { el = document.elementFromPoint(x, y) } catch (err) {}
     if (isPanelElement(el)) return true
-    return whaleHit(x, y)
+    // —— 诊断探针（用户报"点桌宠没反应"，用来定位卡在哪一步）——
+    //   只在结果与上次不同时打一行，不会刷屏。
+    try {
+      var _wh = whaleHit(x, y)
+      if (_wh !== evalLastResult || _wh !== lastInteractive) {
+        evalLastResult = _wh
+        log('穿透判定: (' + Math.round(x) + ',' + Math.round(y) + ') → ' + _wh +
+            ' | 拖动标志=' + (window.__dshpetDragging === true) +
+            ' 强制穿透=' + forced +
+            ' elementFromPoint=' + (el ? ((el.className && String(el.className).slice(0, 40)) || el.tagName) : 'null'))
+      }
+      return _wh
+    } catch (err) { return false }
   }
 
   // ⚠️ 这个函数每帧最多只该跑一次，而且**拖动期间根本不该跑**。
@@ -191,7 +205,16 @@
       waitMoveLog = false
       log('让路恢复后收到第一个 mousemove (' + lastX + ',' + lastY + ') → 事件通道正常')
     }
-    if (window.__dshpetDragging) return          // 拖动中：跳过，别和拖动抢布局
+    if (window.__dshpetDragging) {
+      // —— 诊断：拖动标志卡住会让交互判定永远早退（"点不了"的典型原因）——
+      //   只在刚被置位时打一次，不刷屏。
+      if (!dragFlagLogged) {
+        dragFlagLogged = true
+        log('⚠️ 拖动标志为 true → 交互判定被跳过（若长时间不恢复就是卡住了）')
+      }
+      return
+    }
+    dragFlagLogged = false
     if (updateScheduled) return                  // 合并到下一帧，多个事件只算一次
     updateScheduled = true
     // ⚠️⚠️ **这里绝对不能用 requestAnimationFrame。**
