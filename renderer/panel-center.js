@@ -24,10 +24,36 @@
 (function () {
   'use strict'
 
-  // 只认二级/三级。**不要**加 .dshwv-*（一级菜单）
-  var PANEL_SEL = '.dshrice-menu, .dshpet-exp-panel, .dshpet-exp-cfg'
+  // ⚠️⚠️ **二级/三级面板清单。**
+  //    ⚠️ **绝对不要加 `.dshwv-menu` / `.dshwv-menuview` / `.dshwv-menu-btn`**
+  //       —— 那是一级菜单（挂件自己的 ☰），用户明确要求不许动。
+  //    ⚠️ 也不要加 `.dshwv-*mask`（全屏遮罩）—— 那是点外部关闭用的透明层，
+  //       居中没有意义，动它反而可能影响"点外面关闭"。
+  //    下面这些是**挂件自带的面板**（用户说的"全局设置/按压泡泡设置/自定义"就是它们），
+  //    类名是从 vendor/whale/assets/whale-widget.js 里核对出来的：
+  //      soundPanelBtn（全局设置）→ dshwv-linepanel
+  //      bubbleCustomBtn（按压泡泡设置）→ dshwv-custmenu
+  //      自定义字体/颜色/队列 → dshwv-fontmenu / dshwv-rgbmenu / dshwv-qcolmenu
+  var PANEL_SEL = [
+    '.dshrice-menu',          // rice 的面板（二级）
+    '.dshpet-exp-panel',      // 形象与互动设置（二级）
+    '.dshpet-exp-cfg',        // 它的子分区（三级）
+    '.dshwv-linepanel',       // 全局设置
+    '.dshwv-custmenu',        // 按压泡泡设置
+    '.dshwv-fontmenu',
+    '.dshwv-rgbmenu',
+    '.dshwv-qcolmenu',
+    '.dshwv-usagepanel',      // 用量面板
+    '.dshwv-audiowin',
+    '.dshwv-confirmwin',
+    '.dshwv-cropwin',
+    '.dshwv-gifwin',
+    '.dshwv-snapwin',
+  ].join(', ')
   // 打开态判定：rice 面板加 .dshrice-open；exp 面板用 display 判定（见 isOpen）
   var CSS_ID = 'dshpet-panel-center-css'
+  // 我们自己加到面板上的类（applyPos 用它做选择器；release 时摘掉，不留痕迹）
+  var CENTER_CLS = 'dshpet-panel-center'
 
   var styleEl = null
   var active = null        // 当前被接管的面板
@@ -73,18 +99,17 @@
     }
   }
 
-  // 把位置写成一条带 !important 的规则 —— 这样 rice 的 placeMenu / 贴菜单复核都压不过它
+  // 把位置写成一条带 !important 的规则 —— 这样 rice 的 placeMenu / 贴菜单复核都压不过它。
+  // ⚠️ 用**我们自己加的类**（CENTER_CLS）做选择器，而不是按面板原有的类名拼规则：
+  //    这样不管面板叫什么、有几个类，规则都能命中，也不用逐个维护类名表。
   function applyPos(el, left, top) {
-    var cls = null
-    if (el.classList.contains('dshrice-menu')) cls = '.dshrice-menu'
-    else if (el.classList.contains('dshpet-exp-cfg')) cls = '.dshpet-exp-cfg'
-    else if (el.classList.contains('dshpet-exp-panel')) cls = '.dshpet-exp-panel'
-    if (!cls) return
-    // ⚠️ 同时钉 transform:none —— 有些面板用 transform 定位/居中，不压掉会和 left/top 打架
-    ensureStyle().textContent =
-      cls + '{left:' + left + 'px !important;top:' + top + 'px !important;' +
-      'right:auto !important;bottom:auto !important;transform:none !important;' +
-      'margin:0 !important;position:fixed !important}'
+    try {
+      if (!el.classList.contains(CENTER_CLS)) el.classList.add(CENTER_CLS)
+      ensureStyle().textContent =
+        '.' + CENTER_CLS + '{left:' + left + 'px !important;top:' + top + 'px !important;' +
+        'right:auto !important;bottom:auto !important;transform:none !important;' +
+        'position:fixed !important}'
+    } catch (e) {}
   }
 
   function takeOver(el) {
@@ -105,6 +130,7 @@
   function release() {
     if (!active) return
     log('放开面板')
+    try { active.classList.remove(CENTER_CLS) } catch (e) {}
     active = null
     pos = null
     dragging = null

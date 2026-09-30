@@ -305,6 +305,7 @@
   var trail = []             // [t, x, y]
   // 上一次发给主进程的窗口位置（节流用：没变就不发 IPC）
   var lastSentX = null, lastSentY = null
+  var didAlignArt = false   // 启动时按"立绘实际位置"补正过一次没有（只补一次，避免来回抖）
   var physPos = [0, 0]
   var physVel = [0, 0]
   var mode = null            // null | 'drag' | 'throw'
@@ -1773,13 +1774,28 @@
                 if (!im) return
                 var rr = im.getBoundingClientRect()
                 var scd = screenSize()
+                var dx = Math.round(scd.w - (physPos[0] + rr.right))
+                var dy = Math.round(scd.h - (physPos[1] + rr.bottom))
                 log('立绘贴边诊断: 立绘屏幕右=' + Math.round(physPos[0] + rr.right) +
                     ' 底=' + Math.round(physPos[1] + rr.bottom) +
                     ' | 工作区右=' + scd.w + ' 底=' + scd.h +
-                    ' | 差=' + Math.round(scd.w - (physPos[0] + rr.right)) + ',' +
-                    Math.round(scd.h - (physPos[1] + rr.bottom)) +
+                    ' | 差=' + dx + ',' + dy +
                     ' | 立绘尺寸=' + Math.round(rr.width) + 'x' + Math.round(rr.height) +
                     ' 窗口内容区=' + window.innerWidth + 'x' + window.innerHeight)
+                // ⚠️⚠️ **按量出来的差值补正 —— 这是自校正，不用再猜"该减多少"。**
+                //    实测（用户日志）：立绘屏幕右=2045 底=1101，工作区右=2048 底=1104
+                //    → 差 3,3。窗口位置本身是精确的（主进程按 workArea - getBounds 摆的），
+                //    所以这 3px 只可能来自"立绘在窗口内没贴到最边"（贴图有留白/边框内缩）。
+                //    把差值补到 physPos 上就正好贴住。
+                //    只补一次（补完后差值归零，再来一次也不会动），避免来回抖。
+                if (!didAlignArt && (dx || dy)) {
+                  didAlignArt = true
+                  physPos = [physPos[0] + dx, physPos[1] + dy]
+                  lastSentX = null; lastSentY = null
+                  applyOverride()
+                  log('按立绘实际位置补正: 修正=' + dx + ',' + dy +
+                      ' → physPos=[' + physPos[0] + ',' + physPos[1] + ']')
+                }
               } catch (e) {}
             }, 400)
           } catch (e) {}
