@@ -1763,6 +1763,25 @@
             lastSentX = null; lastSentY = null
             applyOverride()
             log('已同步主进程摆好的位置: physPos=[' + physPos[0] + ',' + physPos[1] + ']')
+            // —— 诊断：立绘**屏幕坐标** vs 工作区边缘 ——
+            // 用户报"还是离右下角有点偏"。窗口位置日志显示是精确的
+            // （1147+901=2048、203+901=1104），所以偏差只可能来自
+            // **立绘在窗口内的位置**。这里把两个都打出来，一眼看出差多少。
+            setTimeout(function () {
+              try {
+                var im = root.querySelector('img')
+                if (!im) return
+                var rr = im.getBoundingClientRect()
+                var scd = screenSize()
+                log('立绘贴边诊断: 立绘屏幕右=' + Math.round(physPos[0] + rr.right) +
+                    ' 底=' + Math.round(physPos[1] + rr.bottom) +
+                    ' | 工作区右=' + scd.w + ' 底=' + scd.h +
+                    ' | 差=' + Math.round(scd.w - (physPos[0] + rr.right)) + ',' +
+                    Math.round(scd.h - (physPos[1] + rr.bottom)) +
+                    ' | 立绘尺寸=' + Math.round(rr.width) + 'x' + Math.round(rr.height) +
+                    ' 窗口内容区=' + window.innerWidth + 'x' + window.innerHeight)
+              } catch (e) {}
+            }, 400)
           } catch (e) {}
         })
       }

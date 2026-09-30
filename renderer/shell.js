@@ -395,6 +395,8 @@
     var okP = await loadScript('/drag-physics.js')
     // 把「偷吃白饭」的浮动小标签收进鲸鱼菜单
     await loadScript('/rice-entry.js')
+    // 二级/三级菜单居中 + 可拖动（在 rice-entry 之后 —— 它要能看到 rice 的面板）
+    await loadScript('/panel-center.js')
     await loadScript('/menu-extras.js')
     // 米粒面板版面修补：按行打类名（带单位的行永远不换行）
     await loadScript('/rice-layout.js')
