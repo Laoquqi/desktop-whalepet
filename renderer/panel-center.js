@@ -24,31 +24,34 @@
 (function () {
   'use strict'
 
-  // ⚠️⚠️ **二级/三级面板清单。**
-  //    ⚠️ **绝对不要加 `.dshwv-menu` / `.dshwv-menuview` / `.dshwv-menu-btn`**
-  //       —— 那是一级菜单（挂件自己的 ☰），用户明确要求不许动。
-  //    ⚠️ 也不要加 `.dshwv-*mask`（全屏遮罩）—— 那是点外部关闭用的透明层，
-  //       居中没有意义，动它反而可能影响"点外面关闭"。
-  //    下面这些是**挂件自带的面板**（用户说的"全局设置/按压泡泡设置/自定义"就是它们），
+  // ⚠️⚠️ **只管"挂件自带的面板"（用户明确要求）。**
+  //
+  //    ⚠️ **不要加 rice 的 `.dshrice-menu`**（偷吃白饭）——
+  //       用户明确说"不要改偷吃白饭的菜单"。
+  //    ⚠️ **不要加外壳的 `.dshpet-exp-panel` / `.dshpet-exp-cfg`**（形象与互动）——
+  //       同上，用户要求改回去。
+  //    ⚠️ **不要加 `.dshwv-menu` / `.dshwv-menuview`**（一级菜单 ☰）——
+  //       用户明确说不许动。
+  //    ⚠️ 也不要加 `.dshwv-*mask`（全屏遮罩）—— 那是点外部关闭用的透明层。
+  //
   //    类名是从 vendor/whale/assets/whale-widget.js 里核对出来的：
   //      soundPanelBtn（全局设置）→ dshwv-linepanel
   //      bubbleCustomBtn（按压泡泡设置）→ dshwv-custmenu
   //      自定义字体/颜色/队列 → dshwv-fontmenu / dshwv-rgbmenu / dshwv-qcolmenu
+  //      用量面板 → dshwv-usagepanel
+  //      编辑窗 → dshwv-audiowin / -confirmwin / -cropwin / -gifwin / -snapwin
   var PANEL_SEL = [
-    '.dshrice-menu',          // rice 的面板（二级）
-    '.dshpet-exp-panel',      // 形象与互动设置（二级）
-    '.dshpet-exp-cfg',        // 它的子分区（三级）
     '.dshwv-linepanel',       // 全局设置
     '.dshwv-custmenu',        // 按压泡泡设置
-    '.dshwv-fontmenu',
-    '.dshwv-rgbmenu',
-    '.dshwv-qcolmenu',
+    '.dshwv-fontmenu',        // 自定义字体
+    '.dshwv-rgbmenu',         // 自定义颜色
+    '.dshwv-qcolmenu',        // 自定义队列配色
     '.dshwv-usagepanel',      // 用量面板
-    '.dshwv-audiowin',
-    '.dshwv-confirmwin',
-    '.dshwv-cropwin',
-    '.dshwv-gifwin',
-    '.dshwv-snapwin',
+    '.dshwv-audiowin',        // 音频导入
+    '.dshwv-confirmwin',      // 确认框
+    '.dshwv-cropwin',         // 图片裁剪
+    '.dshwv-gifwin',          // GIF 编辑
+    '.dshwv-snapwin',         // 吸附设置
   ].join(', ')
   // 打开态判定：rice 面板加 .dshrice-open；exp 面板用 display 判定（见 isOpen）
   var CSS_ID = 'dshpet-panel-center-css'
@@ -88,14 +91,26 @@
     } catch (e) { return false }
   }
 
-  // 屏幕正中央（用**工作区**尺寸，任务栏不影响视觉居中）
+  // ⚠️⚠️ **居中必须用"窗口视口"尺寸算，不能用屏幕尺寸。**
+  //    踩过的坑（用户报"二级菜单都往桌面边上瞬移了，弄到屏幕外边去了"）：
+  //    面板是 `position:fixed`，它的 left/top 是相对**窗口视口**的。
+  //    我上一版却用 screen.availWidth/availHeight（2048×1104）算居中，
+  //    于是 left≈900 —— 而窗口只有 900 宽，面板直接被推到窗口外面。
+  //
+  //    ⚠️ 但用户要的是"**屏幕**正中央"。小窗架构下窗口只有 900×900、
+  //    还钉在桌面右下角 —— 窗口里**根本不存在**屏幕中心那个位置。
+  //    所以真正的做法是：面板打开时**把窗口临时铺满工作区**
+  //    （见 main.cjs 的 pet:panel-open）。窗口铺满后视口 == 工作区，
+  //    这时用视口尺寸算出来的中心就正好是屏幕中心。
+  //    桌宠本身钉在窗口右下角（right:0;bottom:0），窗口铺满后它依然在
+  //    桌面右下角 —— **视觉上完全不动**。
   function centerFor(el) {
     var r = el.getBoundingClientRect()
-    var sw = window.screen && window.screen.availWidth ? window.screen.availWidth : window.innerWidth
-    var sh = window.screen && window.screen.availHeight ? window.screen.availHeight : window.innerHeight
+    var vw = document.documentElement.clientWidth || window.innerWidth
+    var vh = document.documentElement.clientHeight || window.innerHeight
     return {
-      left: Math.round((sw - r.width) / 2),
-      top: Math.round((sh - r.height) / 2),
+      left: Math.round((vw - r.width) / 2),
+      top: Math.round((vh - r.height) / 2),
     }
   }
 
@@ -118,13 +133,23 @@
     pos = null                       // 换了面板 → 回到居中
     dragging = null
     log('接管面板 ' + (el.className || '').split(' ')[0])
+    // ⚠️ 先请主进程把窗口铺满工作区 —— 面板是 fixed 定位，只有视口 == 工作区时
+    //    才存在"屏幕正中央"这个位置（小窗只有 900×900，还钉在右下角）。
+    //    桌宠钉在窗口右下角，铺满后视觉上不动。
+    try { if (window.petApi && window.petApi.panelOpen) window.petApi.panelOpen() } catch (e) {}
+    // 铺满要一点时间（IPC + setBounds），居中分两步：先按当前视口摆一次，
+    // 等窗口真的变大后再校一次。
     applyPos(el, centerFor(el).left, centerFor(el).top)
-    // 尺寸可能还没量准（刚插入 DOM），下一帧再校一次
     requestAnimationFrame(function () {
       if (active !== el || pos) return
       var c = centerFor(el)
       applyPos(el, c.left, c.top)
     })
+    setTimeout(function () {
+      if (active !== el || pos) return
+      var c = centerFor(el)
+      applyPos(el, c.left, c.top)
+    }, 120)
   }
 
   function release() {
@@ -135,6 +160,8 @@
     pos = null
     dragging = null
     clearStyle()
+    // 面板关了 → 请主进程把窗口收回到原来的小窗尺寸
+    try { if (window.petApi && window.petApi.panelClose) window.petApi.panelClose() } catch (e) {}
   }
 
   // —— 拖动 ——
@@ -167,12 +194,13 @@
     try { e.preventDefault() } catch (err) {}
     var left = dragging.baseLeft + dx
     var top = dragging.baseTop + dy
-    // 别让它被拖出屏幕（留 40px 可见，保证还能拖回来）
-    var sw = window.screen && window.screen.availWidth ? window.screen.availWidth : window.innerWidth
-    var sh = window.screen && window.screen.availHeight ? window.screen.availHeight : window.innerHeight
+    // 别让它被拖出**窗口视口**（留 40px 可见，保证还能拖回来）。
+    // ⚠️ 用视口尺寸，不是屏幕尺寸 —— 见 centerFor 的说明。
+    var vw = document.documentElement.clientWidth || window.innerWidth
+    var vh = document.documentElement.clientHeight || window.innerHeight
     var w = active.offsetWidth, h = active.offsetHeight
-    left = Math.max(-(w - 40), Math.min(left, sw - 40))
-    top = Math.max(0, Math.min(top, sh - 40))
+    left = Math.max(-(w - 40), Math.min(left, vw - 40))
+    top = Math.max(0, Math.min(top, vh - 40))
     pos = { left: Math.round(left), top: Math.round(top) }
     applyPos(active, pos.left, pos.top)
   }

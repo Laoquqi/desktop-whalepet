@@ -794,6 +794,48 @@ ipcMain.on('pet:renderer-ready', (e) => {
   } catch (err) {}
 })
 
+// ⚠️⚠️ **挂件面板打开时，把窗口临时铺满工作区。**
+//
+//    为什么必须这么做（用户要求"二级/三级菜单显示在屏幕正中央"）：
+//      面板是 `position:fixed`，它的 left/top 是相对**窗口视口**的。
+//      而小窗架构下窗口只有 900×900、还钉在桌面右下角 ——
+//      窗口里**根本不存在"屏幕中心"那个位置**。
+//      我上一版用屏幕尺寸（2048×1104）算居中，结果 left≈900，
+//      而窗口只有 900 宽，面板直接被推到窗口外面（用户报的"往桌面边上瞬移"）。
+//
+//    铺满之后：视口 == 工作区，渲染端用视口尺寸算出来的中心就是屏幕中心。
+//    **桌宠不会动** —— 它钉在窗口右下角（挂件基础样式 right:0;bottom:0），
+//    窗口铺满后它依然落在桌面右下角，视觉上完全一样。
+//
+//    铺满期间要挡住渲染端的 pet:move-window（物理还在跑，会把窗口拖回原位），
+//    以及让路的 pet:move-window 一样处理 —— 用 __panelExpanded 标记。
+let panelSavedBounds = null
+
+ipcMain.on('pet:panel-open', (e) => {
+  try {
+    const w = BrowserWindow.fromWebContents(e.sender)
+    if (!w || w.isDestroyed()) return
+    if (!panelSavedBounds) panelSavedBounds = w.getBounds()
+    const wa = screen.getPrimaryDisplay().workArea
+    w.__panelExpanded = true
+    log('面板打开 → 窗口铺满工作区 ' + JSON.stringify(wa))
+    w.setBounds({ x: wa.x, y: wa.y, width: wa.width, height: wa.height })
+  } catch (err) {}
+})
+
+ipcMain.on('pet:panel-close', (e) => {
+  try {
+    const w = BrowserWindow.fromWebContents(e.sender)
+    if (!w || w.isDestroyed()) return
+    w.__panelExpanded = false
+    if (panelSavedBounds) {
+      log('面板关闭 → 窗口收回 ' + JSON.stringify(panelSavedBounds))
+      w.setBounds(panelSavedBounds)
+      panelSavedBounds = null
+    }
+  } catch (err) {}
+})
+
 ipcMain.on('pet:move-window', (e, p) => {
   const w = BrowserWindow.fromWebContents(e.sender)
   if (!w || w.isDestroyed() || !p) return
@@ -801,6 +843,10 @@ ipcMain.on('pet:move-window', (e, p) => {
   //    它会不断发 moveWindow 想把自己挪回原位 —— 不挡住的话让路就白做了
   //    （桌宠会自己跑回屏幕上，盖在视频上）。
   if (w.__fsYielded) return
+  // ⚠️ **面板铺满期间也一律忽略。** 窗口现在被撑成整个工作区（为了面板居中），
+  //    渲染端的物理还在跑，会不断发 moveWindow 想把它拖回小窗位置 —— 不挡住的话
+  //    面板居中立刻就废了。等面板关闭、窗口收回原尺寸后自动恢复。
+  if (w.__panelExpanded) return
   const x = Number(p.x), y = Number(p.y)
   if (!isFinite(x) || !isFinite(y)) return
   const size = w.__petWinSize || { width: w.getBounds().width, height: w.getBounds().height }

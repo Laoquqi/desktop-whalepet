@@ -99,6 +99,11 @@ contextBridge.exposeInMainWorld('petApi', {
   onReevalInteractive: (fn) => ipcRenderer.on('pet:reeval-interactive', () => { try { fn() } catch (err) {} }),
   // 全屏让路：主进程要在 260ms 后 hide，先让渲染端把画面淡出
   onFadeOut: (fn) => ipcRenderer.on('pet:fade-out', () => { try { fn() } catch (err) {} }),
+  // 挂件面板开/关：请主进程把窗口临时铺满工作区 / 收回原尺寸。
+  // 为什么要铺满：面板是 position:fixed，left/top 相对**窗口视口**；
+  // 而用户要的"屏幕正中央"在小窗（900×900、钉在右下角）里根本不存在。
+  panelOpen: () => ipcRenderer.send('pet:panel-open'),
+  panelClose: () => ipcRenderer.send('pet:panel-close'),
   // 主进程碰撞世界下发的冲量 + 位置分离（20Hz）
   onImpulse: (fn) => ipcRenderer.on('pet:impulse', (e, d) => { try { fn(d) } catch (err) {} }),
   // 桌宠互撞的冲量转发：撞人的那只把自己该给同伴的份额发过来，
