@@ -165,7 +165,7 @@ const DEFAULT_CONFIG = {
   // ⚠️ **它只在配置文件里**：面板上故意没有滑杆 —— 这是个一次性定下来的手感，
   //    摆一条滑杆等于天天问用户"你要不要更常见一点"，而答案基本是"不要"。
   //    真要改就改 ~/.dsh/.dsh-rice-config.json 里的这个键（或 POST /dsh-rice/config）。
-  headChancePct: 10,
+  headChancePct: 70,
   // —— 「扣在头顶」的落点 ——
   // 坐标和 bowlLeft/bowlTop **同一套**：x 是碗的**中心**、y 是碗的**上边**（都相对 .dshwv-body）。
   // ⚠️ 它按角色存（在 LAYOUT_KEYS 里）—— 每个角色的头顶位置不同，

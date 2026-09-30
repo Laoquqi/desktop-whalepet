@@ -658,7 +658,14 @@
     b.className = 'dshpet-exp-btn'
     b.textContent = '🎭 形象与互动'
     b.title = '多状态形象、互动心情、疲惫模式、开机自启'
-    b.addEventListener('click', function (e) { e.stopPropagation(); openPanel() })
+    b.addEventListener('click', function (e) {
+      e.stopPropagation()
+      // ⚠️ **第二次点击 = 关闭**（用户要求：开关式切换，而不是点了永远开着）。
+      var panelEl = document.querySelector('.dshpet-exp-panel')
+      var isOpen = !!(panelEl && panelEl.style.display === 'block')
+      if (isOpen) { closePanel(); return }
+      openPanel()
+    })
     row.appendChild(b)
     // —— 「打开桌宠」放在「形象与互动」**右边** ——
     //    没有数量限制：每点一次多一只。走主进程开新窗口（见 main.cjs 的 spawnPet）。

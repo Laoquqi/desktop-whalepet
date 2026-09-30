@@ -851,7 +851,7 @@
     // 彩蛋炸弹那条路**必定**触发，不看这个数。`0` = 只留彩蛋那条。
     // **面板里没有这一项**：这个数是要定下来的手感，不是天天要拧的旋钮；
     // 真要改就改配置文件（和 pollMs / stepMs 一样）。
-    headChancePct: 50,
+    headChancePct: 70,
   }
   var CFG_KEYS = [
     'tier1Below', 'tier2Below', 'bitesMax', 'pollMs', 'stepMs', 'grainMs',

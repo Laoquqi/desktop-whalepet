@@ -7,7 +7,7 @@
 >
 > - 小鲸鱼挂件来自 **MeteorNOX/DeepSeek-Balance-Whale-Widget**：
 >   https://github.com/MeteorNOX/DeepSeek-Balance-Whale-Widget
-> - 「偷吃白饭」来自 **Ark/dsh-rice-widget**（衍生自上述项目）
+> - 「偷吃白饭」来自 **三萌MOE/dsh-rice-widget**（衍生自上述项目）
 >
 > 本程序是**整合 / 移植的衍生作品**，非原创。完整来源与许可见
 > [`署名与许可.md`](署名与许可.md)、[`PROVENANCE.md`](PROVENANCE.md)、[`LICENSE`](LICENSE)。
@@ -26,7 +26,6 @@
 | 形态 | 路径 | 体积 | 说明 |
 |---|---|---|---|
 | 便携版（单文件） | `大肥鱼桌宠.exe` | 107 MB | 双击即用、方便分享；每次启动解压到临时目录，稍慢 |
-| 免安装目录版 | `dist\win-unpacked\大肥鱼桌宠.exe` | 376 MB | 启动快；需整个文件夹一起拷 |
 
 **首次使用**：托盘图标（右下角）→ 右键 →「设置 DeepSeek API Key…」填入你的 key，挂件才会显示余额。
 
