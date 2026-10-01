@@ -211,9 +211,18 @@
   //    getBoundingClientRect()。鼠标事件一秒几十上百个，每次都同步重排 = 拖动一卡一卡。
   //    拖动时她本来就是可交互状态，判定没有意义 —— 所以直接跳过（见 __dshpetDragging）。
   var updateScheduled = false
+  var lastNotifyAt = 0        // 转发看门狗心跳的节流（每秒最多 1 条 IPC）
   function update(e) {
     lastX = e.clientX
     lastY = e.clientY
+    // 心跳：告诉主进程"渲染端收到 mousemove 了"。穿透状态下事件是靠
+    // setIgnoreMouseEvents 的转发进来的 —— 转发一断，这里就再也不会跑，
+    // 主进程的看门狗（指针在动却收不到心跳）就是拿它当"转发还活着"的凭据。
+    var now = Date.now()
+    if (now - lastNotifyAt > 1000) {
+      lastNotifyAt = now
+      try { if (api.notifyMove) api.notifyMove() } catch (err) {}
+    }
     if (waitMoveLog) {                      // 诊断：让路恢复后的第一个鼠标移动
       waitMoveLog = false
       log('让路恢复后收到第一个 mousemove (' + lastX + ',' + lastY + ') → 事件通道正常')

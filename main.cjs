@@ -105,6 +105,62 @@ const pets = []
 const interactiveOf = new WeakMap()
 // 每只桌宠**立绘**在屏幕上的矩形（渲染进程每 150ms 报一次，用来算相撞）
 const petRects = new WeakMap()
+// —— 鼠标转发看门狗 ——
+// 渲染端最近一次收到 mousemove 的时间（按窗口记）。穿透状态全靠
+// setIgnoreMouseEvents(true,{forward:true}) 把 mousemove 转发给渲染端来维持，
+// 而**转发没有任何系统回调能告诉你它断了** —— 一旦断掉，渲染端永远收不到
+// 事件、永远无法重新判定，表现就是用户报的"怎么点都没反应，会卡死"。
+// 实测触发场景：窗口样式被某些操作动了之后（thickFrame/焦点/失焦链）。
+const lastRendererMoveAt = new WeakMap()
+// 看门狗：每 600ms 对比"指针在窗口内**移动**了"和"渲染端收到事件了吗"。
+// 指针动了、事件没来 = 转发断了 → 破死锁（强制接管一次 + 让渲染端重判）。
+// 与托盘 rearm 同一套手法；只认"指针在动"是为了不误伤静止悬停
+// （静止时不产生 mousemove 是正常的，不是断转发）。
+let watchdogLastCur = null
+const watchdogCooldown = new WeakMap()   // 一次"误救援"之后 5 秒内不再重试，防抖动
+setInterval(() => {
+  let cur
+  try { cur = screen.getCursorScreenPoint() } catch (err) { return }
+  try {
+    const moved = !!(watchdogLastCur && cur &&
+      (cur.x !== watchdogLastCur.x || cur.y !== watchdogLastCur.y))
+    watchdogLastCur = cur
+    if (!moved) return
+    for (const w of pets) {
+      try {
+        if (!w || w.isDestroyed() || !w.isVisible() || w.__fsYielded) continue
+        const b = w.getBounds()
+        if (cur.x < b.x || cur.y < b.y ||
+            cur.x >= b.x + b.width || cur.y >= b.y + b.height) continue
+        if (interactiveOf.get(w) !== false) continue   // 只在"应该穿透"的状态下需要救
+        if (Date.now() - (watchdogCooldown.get(w) || 0) < 5000) continue
+        const lastAt = lastRendererMoveAt.get(w) || 0
+        if (Date.now() - lastAt < 1500) continue       // 渲染端有事件，转发没断
+        log('鼠标转发看门狗：指针在窗口内移动但渲染端收不到事件 → 强制接管重判')
+        interactiveOf.delete(w)
+        w.setIgnoreMouseEvents(false)
+        interactiveOf.set(w, true)
+        try { w.webContents.send('pet:reeval-interactive') } catch (err) {}
+        // ⚠️ **误救援保护**：指针当时若其实悬在**更高的窗口**上，救援后事件
+        //    仍然不会来（窗口在下面，轮不到它）。那就必须退回穿透 —— 否则
+        //    窗口会一直以"接管"状态吞掉桌宠旁边空白处的桌面点击。
+        //    所以救援后 800ms 还没等到事件：当成误判，静默切回穿透并冷却 5 秒。
+        const stamp = Date.now()
+        setTimeout(() => {
+          try {
+            if (w.isDestroyed()) return
+            if ((lastRendererMoveAt.get(w) || 0) >= stamp) return   // 救成功了
+            interactiveOf.delete(w)
+            w.setIgnoreMouseEvents(true, { forward: true })
+            interactiveOf.set(w, false)
+            watchdogCooldown.set(w, Date.now())
+            log('看门狗：救援后 800ms 仍无事件 → 当成误判切回穿透（5 秒内不再重试）')
+          } catch (err) {}
+        }, 800)
+      } catch (err) {}
+    }
+  } catch (err) {}
+}, 600)
 // 碰撞物理核心（ESM 模块，启动时动态 import 进来）
 let collisionMod = null
 
@@ -1520,6 +1576,11 @@ function openSettings() {
 ipcMain.handle('pet:port', () => (server ? server.port : 0))
 ipcMain.handle('pet:data-dir', () => DATA_DIR)
 ipcMain.on('pet:set-interactive', (e, on) => setInteractive(on, BrowserWindow.fromWebContents(e.sender)))
+// 渲染端收到 mousemove 的心跳（渲染端已节流到每秒最多 1 条），给转发看门狗用
+ipcMain.on('pet:renderer-move', (e) => {
+  const w = BrowserWindow.fromWebContents(e.sender)
+  if (w) lastRendererMoveAt.set(w, Date.now())
+})
 ipcMain.on('pet:reset-pos', () => win && win.webContents.send('pet:reset-pos'))
 // ⚠️ 重载页面**必须走主进程**。
 //    渲染进程里的 location.reload() 在这个应用里不工作：它发起一次永远不提交的导航，
@@ -3940,8 +4001,11 @@ async function runSelfTest() {
     say(!!(probe.hitInfo && probe.hitInfo.ready), '命中图已构建', probe.hitInfo ? String(probe.hitInfo.src) : 'n/a')
     say(probe.hitAtImgCenter === true, '★ 立绘中心判为「可点」（左键点击的关键）', String(probe.hitAtImgCenter))
     say(probe.hitAtRootTopLeft === false, '根节点空白角判为「穿透」', String(probe.hitAtRootTopLeft))
-    say(typeof probe.hitRatioPct === 'number' && probe.hitRatioPct > 2 && probe.hitRatioPct < 98,
-      '命中比例合理（既不是全空、也不是整块矩形）', probe.hitRatioPct + '%（' + probe.hitCount + '/' + probe.hitTotal + '）')
+    // ⚠️ 3966aba 起命中判定改为「立绘矩形内一律算命中」（不再逐像素查 alpha，
+    //    容错半径 24px 也是同一目的）—— 矩形内采样理应是 100%。
+    //    本断言同步为新策略：下限仍是"不是全空"（>2%），上限放开到 100%。
+    say(typeof probe.hitRatioPct === 'number' && probe.hitRatioPct > 2 && probe.hitRatioPct <= 100,
+      '命中比例合理（3966aba 起矩形内一律命中：>2% 且 ≤100%）', probe.hitRatioPct + '%（' + probe.hitCount + '/' + probe.hitTotal + '）')
 
     // —— 「抓现行」翻碗动画：真跑一遍，量最终落点 ——
     // 这个动画没法靠肉眼在自检里看，所以把"碗最后停在哪"量成数字来断言。
