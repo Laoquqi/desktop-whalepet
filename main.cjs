@@ -161,6 +161,35 @@ setInterval(() => {
     }
   } catch (err) {}
 }, 600)
+
+// —— 即时接管：指针进了立绘矩形就**立刻**可点（不等任何证据链） ——
+// 看门狗是"异常探测"（发现转发断了才救），最坏要等约 1 秒；用户要求 0 等待。
+// 其实主进程手里就有每只桌宠**立绘的屏幕矩形**（碰撞广播用的 petRects，
+// 渲染端每 50ms 更新一次）+ 系统指针位置：指针进矩形而窗口还在穿透态，
+// 就直接接管 —— 这本来就是渲染端指针在立绘上时该有的状态，不依赖转发
+// 是否活着，天然 0 等待。渲染端随后按真实指针位置复核，两边不冲突。
+// ⚠️ 必须跳过的三种情况：托盘强制穿透（用户的逃生口，不能替他接管）、
+//    托盘隐藏 / 全屏让路（看不见的窗口不许吞点击）。
+setInterval(() => {
+  let cur
+  try { cur = screen.getCursorScreenPoint() } catch (err) { return }
+  for (const w of pets) {
+    try {
+      if (!w || w.isDestroyed() || !w.isVisible()) continue
+      if (w.__fsYielded || w.__trayHidden || w.__forcedPassthrough) continue
+      if (interactiveOf.get(w) !== false) continue   // 已是接管态，不用管
+      const r = petRects.get(w)
+      if (!r || !(r.w > 0) || !(r.h > 0)) continue
+      if (cur.x < r.x - 8 || cur.y < r.y - 8 ||
+          cur.x > r.x + r.w + 8 || cur.y > r.y + r.h + 8) continue
+      interactiveOf.delete(w)
+      w.setIgnoreMouseEvents(false)
+      interactiveOf.set(w, true)
+      try { w.webContents.send('pet:reeval-interactive') } catch (err) {}
+      log('即时接管：指针进入立绘矩形 → 强制可点')
+    } catch (err) {}
+  }
+}, 50)
 // 碰撞物理核心（ESM 模块，启动时动态 import 进来）
 let collisionMod = null
 
@@ -1530,7 +1559,10 @@ function buildTray() {
         label: '强制鼠标穿透（她点不动时先关掉）',
         type: 'checkbox',
         checked: false,
-        click: keepOpen((item) => win && win.webContents.send('pet:force-passthrough', !!item.checked)),
+        click: keepOpen((item) => {
+          if (win) win.__forcedPassthrough = !!item.checked   // 即时接管/看门狗见此让路
+          win && win.webContents.send('pet:force-passthrough', !!item.checked)
+        }),
       },
       // ⚠️ 「桌宠可点模式」开关已删除（2026-09-29）。
       //    它是排查"全屏视频进出后点不了"时加的临时诊断项，问题已解决

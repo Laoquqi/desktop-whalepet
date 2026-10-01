@@ -98,14 +98,15 @@
     return { x: sx + r.left, y: sy + r.top, w: r.width, h: r.height }
   }
 
-  // ⚠️ **只有一只桌宠时，位置上报是纯浪费。**
-  //    上报的唯一用途是喂主进程的碰撞世界（它 2 只以上才工作）——
-  //    单只时每 50ms 一次 getBoundingClientRect（**强制重排**）+ 一次 IPC，白烧 CPU。
+  // ⚠️ 上报现在有**两个**用途，所以**单只也要报**：
+  //    ① 喂主进程的碰撞世界（它 2 只以上才工作）；
+  //    ② 主进程的「即时接管」——指针进了立绘矩形就立刻让窗口可点，
+  //      不依赖鼠标转发是否活着（单只时它正是唯一能救"点不动"的凭据）。
+  //    代价：每 50ms 一次 getBoundingClientRect（强制重排）+ 一次 IPC。
   //    只数变化由主进程推给我们（见 pet:count-changed），不用自己轮询。
   var petCount = 1
   function report() {
     if (!api.reportRect) return
-    if (petCount < 2) return
     var me = myRect()
     if (!me) return
     var p = phys()
