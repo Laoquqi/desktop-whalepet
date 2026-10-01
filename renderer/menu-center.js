@@ -204,27 +204,77 @@
   //    不用 MutationObserver 的原因：面板的创建/显示路径太多（挂件各处都在写），
   //    轮询是唯一"不管谁开的面板都认"的口径。
   //
-  //    ⚠️ **扩窗提前到 ☰ 菜单打开的那一刻**（而不等面板出现）—— 否则面板先在
-  //    原位（窗口中心附近）渲染一帧、扩窗后再跳到屏幕中心，用户看到的就是
-  //    "从原位置瞬移过去 + 屏幕闪"。菜单一开就扩好，面板打开时视口已经是
-  //    整个工作区，弹性居中天然落在屏幕正中，一次扩窗、零瞬移。
+  //    ⚠️ **扩窗只在面板真正打开时做，绝不在 ☰ 菜单打开时做**（用户实测：
+  //    菜单一开就扩窗，桌宠/菜单/偷吃白饭菜单会跟着瞬移闪一下再回来 ——
+  //    窗口挪动+缩放必有一次可见重绘，不能挂在"每次开菜单"上）。
+  //
+  //    ⚠️ **"先藏后放"消灭面板瞬移**：面板在 900×900 的小窗口里打开时先落在
+  //    原位（窗口中心附近），扩窗后才跳到屏幕中心 —— 那一下瞬移就是这么来的。
+  //    现在：检测到面板露头 → 立刻 visibility:hidden 藏住 → 扩窗落地
+  //    （视口已是整个工作区）→ 再放出来。用户看到的就是"点一下，面板直接
+  //    出现在屏幕正中"，没有跳動。窗口本来就扩着时（连续开第二个面板）
+  //    不藏不放，直接开。
   var lastActive = false
+  var revealPending = false   // 有面板被藏住，等扩窗落地后放出
+  var revealAt = 0
   function tick() {
-    var menuOpen = !!document.querySelector('.dshwv-menu.dshwv-menu-open')
-    var active = menuOpen || visibleCount() > 0
+    var n = visibleCount()
+    var active = n > 0
     if (active && !lastActive) {
       expand()
+      if (expanded) {
+        hideAllMasks()
+        revealPending = true
+        revealAt = Date.now()
+      }
       window.__dshpetPanelExpanded = true   // drag-physics 的朝向判定见此让路（见下）
     } else if (!active && lastActive) {
       window.__dshpetPanelExpanded = false
+      revealPending = false
+      unhideAllMasks()
       restore()
       correctFacing()
     }
     lastActive = active
     if (!expanded) return
+    if (revealPending) {
+      // 扩窗落地（视口短边已经变大）→ 放出被藏的面板。
+      // ⚠️ 兜底：扩窗万一没落地，最多藏 1.5 秒强制放行 —— 面板绝不能被藏没。
+      if (window.innerWidth > pinMin + 50 || Date.now() - revealAt > 1500 || !n) {
+        revealPending = false
+        unhideAllMasks()
+      } else {
+        hideAllMasks()   // 等待期间新出现的面板也藏住
+      }
+    }
     var lists = document.querySelectorAll(LIST_SEL)
     for (var i = 0; i < lists.length; i++) handleList(lists[i])
     handleMasks()
+  }
+
+  // —— 先藏后放 ——
+  function hideAllMasks() {
+    try {
+      var all = document.querySelectorAll(MASK_SEL + ',' + LIST_SEL)
+      for (var i = 0; i < all.length; i++) {
+        var el = all[i]
+        if (!(el.offsetWidth || el.offsetHeight)) continue
+        if (getComputedStyle(el).display === 'none') continue
+        el.__dshpetHiddenForExpand = true
+        el.style.setProperty('visibility', 'hidden', 'important')
+      }
+    } catch (e) {}
+  }
+  function unhideAllMasks() {
+    try {
+      var all = document.querySelectorAll(MASK_SEL + ',' + LIST_SEL)
+      for (var i = 0; i < all.length; i++) {
+        var el = all[i]
+        if (!el.__dshpetHiddenForExpand) continue
+        el.__dshpetHiddenForExpand = false
+        el.style.removeProperty('visibility')
+      }
+    } catch (e) {}
   }
 
   // —— 朝向校正 ——
