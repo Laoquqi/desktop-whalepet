@@ -307,27 +307,17 @@ function setPetsYieldForFullscreen(hidden) {
         //    所以既不需要 showInactive，也不需要 setBounds）。
         w.__fsYielded = false
         try { w.setOpacity(1) } catch (err) {}
-        // 再把建窗时设过的标志断言一遍（保险：万一系统在挪动过程中动了样式）
-        try { w.setFocusable(petFocusable) } catch (err) {}
+        // ⚠️⚠️ **不要在这里 setFocusable 来回切。**
+        //    下面那段"true → petFocusable"的横跳是 hide/show 时代的治标手段
+        //    （ hide/show 会弄丢窗口样式，得靠来回切强制重算）—— 而让路
+        //    现在只做 setOpacity(0/1)，窗口样式从头到尾没被动过，横跳没有
+        //    必要，反而是在给不可激活窗口（WS_EX_NOACTIVATE）徒增一次样式
+        //    重建 —— 那正是"恢复后点不动"最可疑的磨损源。彻底删掉。
+        //    万一真有状态漂移：穿透缓存重置 + 渲染端重判（下面）+ 即时接管
+        //    规则 + 转发看门狗，四层兜底都在。
         try { w.setIgnoreMouseEvents(false) } catch (err) {}
         try { w.setAlwaysOnTop(true, 'screen-saver') } catch (err) {}
         try { w.moveTop() } catch (err) {}
-        // 再延后一拍重做一次：show 是异步落地的，紧接着调可能被系统的
-        // "显示过程"覆盖掉。120ms 足够，用户感知不到。
-        setTimeout(() => {
-          try {
-            if (w.isDestroyed()) return
-            // ⚠️ **来回切一次 setFocusable**：Windows 上样式一旦被系统"忘记"，
-            //    单纯重复设置同一个值可能不触发重建；先设成 true 再设回 false
-            //    才会真的重算窗口样式（WS_EX_NOACTIVATE / WS_EX_TRANSPARENT）。
-            //    这是让"重新断言"真正生效的关键一步。
-            w.setFocusable(true)
-            w.setFocusable(petFocusable)
-            w.setIgnoreMouseEvents(false)
-            w.setAlwaysOnTop(true, 'screen-saver')
-            w.moveTop()
-          } catch (err) {}
-        }, 120)
         w.__fsWasVisible = false
         // ⚠️⚠️ **让路恢复后必须强制重新评估鼠标穿透。**
         //    主进程和渲染端**各有一个状态缓存**：
