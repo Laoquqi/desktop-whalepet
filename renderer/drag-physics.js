@@ -861,6 +861,11 @@
   function updateFacing() {
     try {
       if (!root) return
+      // ⚠️ 面板居中扩窗期间（renderer/menu-center.js 置位）必须冻结朝向：
+      //    窗口原点跳变的 transition 帧里，screenX 已变、立绘 rect 还没重排，
+      //    这里会把"她在屏幕哪半边"算错 → 桌宠自己翻转。扩窗期间立绘的屏幕
+      //    位置一像素没动，朝向本来就不该变；还原后 menu-center 会校正一次。
+      if (window.__dshpetPanelExpanded) return
       var img = document.querySelector('img.dshwv-img')
       var r = (img || root).getBoundingClientRect()
       if (!r || !r.width) return

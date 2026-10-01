@@ -203,16 +203,50 @@
   // —— 轮询：面板开关检测 + 摆位。120ms 一轮、每轮几个 querySelector，代价可忽略。
   //    不用 MutationObserver 的原因：面板的创建/显示路径太多（挂件各处都在写），
   //    轮询是唯一"不管谁开的面板都认"的口径。
-  var lastCount = 0
+  //
+  //    ⚠️ **扩窗提前到 ☰ 菜单打开的那一刻**（而不等面板出现）—— 否则面板先在
+  //    原位（窗口中心附近）渲染一帧、扩窗后再跳到屏幕中心，用户看到的就是
+  //    "从原位置瞬移过去 + 屏幕闪"。菜单一开就扩好，面板打开时视口已经是
+  //    整个工作区，弹性居中天然落在屏幕正中，一次扩窗、零瞬移。
+  var lastActive = false
   function tick() {
-    var n = visibleCount()
-    if (n > 0 && lastCount === 0) expand()
-    else if (n === 0 && lastCount > 0) restore()
-    lastCount = n
+    var menuOpen = !!document.querySelector('.dshwv-menu.dshwv-menu-open')
+    var active = menuOpen || visibleCount() > 0
+    if (active && !lastActive) {
+      expand()
+      window.__dshpetPanelExpanded = true   // drag-physics 的朝向判定见此让路（见下）
+    } else if (!active && lastActive) {
+      window.__dshpetPanelExpanded = false
+      restore()
+      correctFacing()
+    }
+    lastActive = active
     if (!expanded) return
     var lists = document.querySelectorAll(LIST_SEL)
     for (var i = 0; i < lists.length; i++) handleList(lists[i])
     handleMasks()
+  }
+
+  // —— 朝向校正 ——
+  // 扩/缩窗口会让窗口原点跳变：transition 帧里 drag-physics 的 updateFacing
+  // 可能读到"新 screenX + 旧布局 rect"，把"她在屏幕哪半边"算错 → 桌宠自己翻转。
+  // 扩窗期间该判定被 __dshpetPanelExpanded 冻结（drag-physics 侧一行守卫）；
+  // 全部关掉、布局落定之后，这里按同一口径（立绘中心 vs 屏幕中线）校正一次。
+  // 类一改，drag-physics 自己的 classObs 会做失效缓存/重夹等善后。
+  function correctFacing() {
+    try {
+      var root = document.querySelector('.dshwv-root')
+      var img = document.querySelector('img.dshwv-img')
+      if (!root || !img) return
+      var r = img.getBoundingClientRect()
+      if (!r || !r.width) return
+      var sc = { x: (window.screen || {}).availLeft || 0, w: (window.screen || {}).availWidth || 0 }
+      var centerX = window.screenX + r.left + r.width / 2
+      var wantLeft = centerX < sc.x + sc.w / 2
+      if (wantLeft !== root.classList.contains('dshwv-left')) {
+        root.classList.toggle('dshwv-left', wantLeft)
+      }
+    } catch (e) {}
   }
 
   function start() {
