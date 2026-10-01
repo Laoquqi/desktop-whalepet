@@ -484,6 +484,8 @@
     // （窗口设了 setFocusable(false)，Windows 上拿不到键盘焦点）
     await loadScript('/panel-focus.js')
     await loadScript('/menu-extras.js')
+    // 面板居中：二级/三级面板 → 屏幕正中央 + 可拖动（自检模式自动跳过）
+    await loadScript('/menu-center.js')
     // 米粒面板版面修补：按行打类名（带单位的行永远不换行）
     await loadScript('/rice-layout.js')
     await loadScript('/rice-songs.js')
