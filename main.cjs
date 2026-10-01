@@ -230,6 +230,10 @@ function setPetsYieldForFullscreen(hidden) {
   for (const w of pets) {
     try {
       if (w.isDestroyed()) continue
+      // ⚠️ 托盘「显示/隐藏」藏起来的那只不参与让路：
+      //    它本来就是透明的，让路再叠一次没有意义；
+      //    更重要的是让路**恢复**时会把透明度设回 1 —— 会把托盘藏起的桌宠带回来。
+      if (w.__trayHidden) continue
       if (hidden) {
         w.__fsWasVisible = w.isVisible()
         if (w.isVisible()) {
@@ -682,8 +686,10 @@ function makePetWindow(port, primary) {
   w.webContents.on('did-fail-load', (e, code, desc) => log('页面加载失败', code, desc))
 
   // 窗口本身不允许被关掉（它是桌宠的容器）；要退出请走托盘
+  // ⚠️ 收进托盘也**不能用 hide()** —— 同「显示 / 隐藏」菜单项的原因
+  //    （hide 后这只不可激活窗口的点击命中会失效，再显示就点不动了）。
   w.on('close', (e) => {
-    if (!quitting) { e.preventDefault(); w.hide() }
+    if (!quitting) { e.preventDefault(); setPetHidden(w, true) }
   })
   return w
 }
@@ -704,6 +710,33 @@ function setInteractive(on, w) {
     else w.setIgnoreMouseEvents(true, { forward: true })
     log('穿透状态 → ' + (on ? '接管（可点）' : '穿透'))     // 诊断：谁在什么时候改的
   } catch (err) { log('切换鼠标穿透失败', err && err.message) }
+}
+
+// —— 托盘「显示 / 隐藏」：**绝不走 hide()/show()** ——
+// 这只窗口是 setFocusable(false) 的不可激活窗口（WS_EX_NOACTIVATE）：
+// hide() 再 show() 之后 Windows 的**点击命中会失效**（mousemove 还能到，
+// 点击送不进窗口）—— 用户报的"显示/隐藏点完完全点不动"就是它，全屏让路
+// 当年也栽在这上面、改成了 setOpacity(0) 才好。这里用同一套替代：
+// 隐藏 = 透明度 0 + 整窗穿透（看不见、也不吞覆盖区域的桌面点击）；
+// 显示 = 恢复透明度 + "重新武装"（强制接管一次，渲染端按真实指针重判）。
+// 窗口状态从头到尾没被打断，显示出来立刻就能点。
+function setPetHidden(w, hidden) {
+  if (!w || w.isDestroyed()) return
+  w.__trayHidden = !!hidden
+  try { w.setOpacity(hidden ? 0 : 1) } catch (err) {}
+  try { w.webContents.send('pet:tray-hidden', !!hidden) } catch (err) {}
+  if (hidden) {
+    interactiveOf.delete(w)
+    try { w.setIgnoreMouseEvents(true, { forward: true }) } catch (err) {}
+    interactiveOf.set(w, false)
+  } else {
+    interactiveOf.delete(w)
+    try { w.setIgnoreMouseEvents(false) } catch (err) {}
+    interactiveOf.set(w, true)
+    try { w.moveTop() } catch (err) {}
+    try { w.webContents.send('pet:reeval-interactive') } catch (err) {}
+  }
+  log('托盘显示/隐藏 → ' + (hidden ? '隐藏（透明+穿透）' : '显示（重新武装）'))
 }
 
 function reposition() {
@@ -1488,7 +1521,7 @@ function buildTray() {
       setTimeout(() => { try { rearmPetInteractivity() } catch (err) {} }, 1500)
     }
     const menu = Menu.buildFromTemplate([
-      { label: '显示 / 隐藏', click: keepOpen(() => { if (!win) return; win.isVisible() ? win.hide() : win.showInactive() }) },
+      { label: '显示 / 隐藏', click: keepOpen(() => { if (!win) return; setPetHidden(win, !win.__trayHidden) }) },
       { type: 'separator' },
       { label: '设置 DeepSeek API Key…', click: keepOpen(openSettings) },
       { label: '回到右下角', click: keepOpen(() => win && win.webContents.send('pet:reset-pos')) },
@@ -1542,7 +1575,7 @@ function buildTray() {
     trayMenu = menu
     tray.setToolTip('大肥鱼桌宠')
     tray.setContextMenu(menu)
-    tray.on('double-click', () => { if (win) win.isVisible() ? win.hide() : win.showInactive() })
+    tray.on('double-click', () => { if (win) setPetHidden(win, !win.__trayHidden) })
   } catch (err) {
     log('托盘创建失败', err && err.message)
   }

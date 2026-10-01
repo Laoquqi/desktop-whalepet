@@ -163,6 +163,10 @@
 
   function evaluate(x, y) {
     if (forced) return false
+    // ⚠️ 托盘「显示/隐藏」藏起来的时候必须一直判穿透：窗口只是透明度 0，
+    //    并没有真的隐藏 —— 判成"可点"就会吞掉它覆盖区域的桌面点击
+    //    （用户对着空气点不动图标）。
+    if (trayHidden) return false
     // ⚠️ **米粒设置面板开着的时候，整窗都要接收鼠标事件。**
     //    不然"点空白处关闭面板"永远不生效：面板之外的区域是穿透的，
     //    点击直接落到桌面上，页面根本收不到 —— 面板里那个"点外面关闭"的
@@ -328,6 +332,23 @@
       forced = !!on
       setInteractive(false)
       log('强制鼠标穿透：' + (forced ? '开' : '关'))
+    })
+  }
+
+  // 托盘「显示 / 隐藏」：主进程用"透明度 0"代替 hide()（hide/show 会弄坏这只
+  // 不可激活窗口的点击命中 —— 那正是"显示/隐藏后点不动"的根因）。
+  // 隐藏期间这里持续判穿透（见 evaluate 顶部）；重新显示时清缓存，
+  // 让下一次 mousemove 重新下发真实判定。
+  var trayHidden = false
+  if (api.onTrayHidden) {
+    api.onTrayHidden(function (on) {
+      trayHidden = !!on
+      if (trayHidden) {
+        setInteractive(false)
+      } else {
+        lastInteractive = null
+      }
+      log('托盘显示/隐藏 → ' + (trayHidden ? '隐藏' : '显示'))
     })
   }
 

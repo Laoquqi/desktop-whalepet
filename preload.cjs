@@ -13,6 +13,8 @@ contextBridge.exposeInMainWorld('petApi', {
   // 渲染端收到 mousemove 的心跳（渲染端自行节流），主进程的转发看门狗靠它
   // 分辨"指针没动"和"转发断了"—— 断了就强制接管，防止"怎么点都没反应"死锁
   notifyMove: () => ipcRenderer.send('pet:renderer-move'),
+  // 托盘「显示/隐藏」：主进程用透明度代替 hide()，渲染端在隐藏期间强制判穿透
+  onTrayHidden: (fn) => ipcRenderer.on('pet:tray-hidden', (e, on) => { try { fn(on) } catch (err) {} }),
   // 小窗口架构：渲染进程的物理位置（屏幕坐标）驱动窗口移动
   moveWindow: (p) => ipcRenderer.send('pet:move-window', p),
   // 诊断：IPC 监听器数量。
