@@ -32,7 +32,15 @@ const { app, BrowserWindow, ipcMain, Tray, Menu, screen, nativeImage, shell, dia
 // ③ 磁盘缓存限到 32MB：本地服务的响应本来就不该进 HTTP 缓存。
 // 三个开关的真实效果以打包实测为准（见 git 记录里的内存数字）。
 app.commandLine.appendSwitch('enable-features', 'NetworkServiceInProcess')
-app.commandLine.appendSwitch('disable-features', 'AudioServiceOutOfProcess')
+// ⚠️⚠️ **必须禁用 Chromium 的原生窗口遮挡计算（CalculateNativeWinOcclusion）。**
+//    用户实锤：QQ 截屏的全屏覆盖层会把透明桌宠窗口整个盖住，Chromium 的
+//    遮挡跟踪器随之把它标记为"被遮挡"并暂停渲染与输入；覆盖层关掉后，
+//    跟踪器对透明无边框窗口的恢复不可靠 —— 症状正是"截屏（完成/取消）后
+//    桌宠看得见却点不动，整个卡死"，且让路已经排除 QQ 也不再消失仍然复现。
+//    透明悬浮窗必须常驻可渲染、可命中，这个特性必须关（透明挂件类应用的
+//    通行做法）。代价只是被完全盖住时也照常渲染，窗口小（900×900）可忽略。
+app.commandLine.appendSwitch('disable-features',
+  'AudioServiceOutOfProcess,CalculateNativeWinOcclusion')
 app.commandLine.appendSwitch('disk-cache-size', String(32 * 1024 * 1024))
 // ⚠️ **不要关硬件加速**（试过，已撤销）：软件渲染下全屏透明窗口每次重绘
 //    （开菜单、动画）都会把视频正在用的硬件叠加层（MPO）挤掉 ——
