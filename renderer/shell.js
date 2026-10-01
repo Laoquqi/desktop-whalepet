@@ -320,8 +320,9 @@
   }
 
   // 兜底：面板开合、她被拖动之后，指针没动但状态该变 —— 每 1 秒用最后坐标复核一次
+  // ⚠️ 拖拽中跳过：这时切穿透会让 pointerup 送不进来，拖拽冻结
   setInterval(function () {
-    if (lastX < 0) return
+    if (lastX < 0 || window.__dshpetDragging) return
     var want = evaluate(lastX, lastY)
     if (want !== lastInteractive) setInteractive(want)
   }, 1000)
@@ -344,7 +345,10 @@
     api.onTrayHidden(function (on) {
       trayHidden = !!on
       if (trayHidden) {
-        setInteractive(false)
+        // ⚠️ **拖拽中不要立刻切穿透**：窗口一穿透，pointermove/pointerup 就
+        //    送不进来了，拖拽会冻结在半空。先记住状态，等拖拽结束，
+        //    下一次 mousemove 的 evaluate（或下面的秒级复核）会自己判穿透。
+        if (!window.__dshpetDragging) setInteractive(false)
       } else {
         lastInteractive = null
       }

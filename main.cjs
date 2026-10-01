@@ -284,6 +284,28 @@ function setPetsYieldForFullscreen(hidden) {
           //    260ms ≈ 渲染端那条 0.22s transition + 余量。
           try { w.webContents.send('pet:fade-out') } catch (err) {}
           w.__fsYielded = true                    // 让路中：pet:move-window 要忽略
+          // ⚠️⚠️ **让路期间必须整窗穿透（复用托盘隐藏的 renderer 判定闸）。**
+          //    窗口只是变透明、并没有关掉 —— 如果保持"接管"状态，隐形的她
+          //    会把她原来那块区域的**点击全吞掉**：QQ 截屏的框选拖到她身上
+          //    就失灵、视频那一块点不动。
+          //    ⚠️ 但**不能立刻切**：用户若正拽着她，窗口一穿透 pointerup 就
+          //    送不进来，拖拽会冻结在半空（="卡死"）。所以先只发 renderer
+          //    判定闸（拖拽中它会自己缓一拍），主进程等"拖拽结束"再强制穿透。
+          try { w.webContents.send('pet:tray-hidden', true) } catch (err) {}
+          let yieldWaitN = 0
+          const yieldWait = setInterval(() => {
+            try {
+              if (w.isDestroyed()) { clearInterval(yieldWait); return }
+              const r = petRects.get(w)
+              if (r && r.dragging && yieldWaitN < 50) return   // 还拽着，等（最多 10 秒）
+              clearInterval(yieldWait)
+              if (!w.__fsYielded) return                       // 让路已经结束了
+              interactiveOf.delete(w)
+              w.setIgnoreMouseEvents(true, { forward: true })
+              interactiveOf.set(w, false)
+              log('让路：' + (r && r.dragging ? '等待超时' : '拖拽已结束') + ' → 整窗穿透')
+            } catch (err) { clearInterval(yieldWait) }
+          }, 200)
           setTimeout(() => {
             try {
               if (w.isDestroyed() || !w.__fsYielded) return
@@ -307,6 +329,9 @@ function setPetsYieldForFullscreen(hidden) {
         //    所以既不需要 showInactive，也不需要 setBounds）。
         w.__fsYielded = false
         try { w.setOpacity(1) } catch (err) {}
+        // 解除让路期间的"强制穿透"闸（与 pet:tray-hidden true 配对）。
+        // 通知渲染端后，下面本就有的"强制接管一次 + 重判"会立刻恢复可点。
+        try { w.webContents.send('pet:tray-hidden', false) } catch (err) {}
         // ⚠️⚠️ **不要在这里 setFocusable 来回切。**
         //    下面那段"true → petFocusable"的横跳是 hide/show 时代的治标手段
         //    （ hide/show 会弄丢窗口样式，得靠来回切强制重算）—— 而让路
