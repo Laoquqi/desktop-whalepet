@@ -50,6 +50,78 @@
         'flex:0 0 auto;pointer-events:auto}',
       '.dshpet-draggrip:hover{background:rgba(32,49,112,.18)}',
       '.dshpet-draggable-title{cursor:move;user-select:none;-webkit-user-select:none;touch-action:none}',
+
+      // ============ 液态玻璃皮肤（菜单 + 按键 + 列表 + 卡片）============
+      // 玻璃配方：半透明白渐变底 + backdrop 模糊提饱和 + 白高光描边 +
+      // 内侧上亮下暗两道内阴影 + 大圆角；深蓝 pill 按钮带渐变与浮起反馈。
+      // 全部 !important 压过挂件样式表（我们的 <style> 注入得更晚）。
+      // —— ☰ 菜单盒 ——
+      '.dshwv-menu{' +
+        'background:linear-gradient(148deg,rgba(255,255,255,.74) 0%,rgba(238,244,255,.55) 52%,rgba(255,255,255,.64) 100%) !important;' +
+        'backdrop-filter:blur(18px) saturate(1.6) !important;' +
+        '-webkit-backdrop-filter:blur(18px) saturate(1.6) !important;' +
+        'border:1px solid rgba(255,255,255,.68) !important;' +
+        'border-radius:18px !important;' +
+        'padding:12px 14px !important;' +
+        'box-shadow:0 18px 50px rgba(21,36,84,.26),0 2px 8px rgba(21,36,84,.12),' +
+          'inset 0 1px 0 rgba(255,255,255,.9),inset 0 -1px 0 rgba(255,255,255,.3) !important;' +
+        '}',
+      // 斜向高光扫过（负 z-index：垫在内容下、浮在底色上）
+      '.dshwv-menu::before{content:"";position:absolute;inset:0;border-radius:inherit;' +
+        'pointer-events:none;z-index:-1;' +
+        'background:linear-gradient(158deg,rgba(255,255,255,.5) 0%,rgba(255,255,255,0) 36%,' +
+          'rgba(255,255,255,0) 64%,rgba(255,255,255,.26) 100%)}',
+      // —— 菜单行：圆角悬停高亮 ——
+      '.dshwv-menu-row{margin:4px -6px !important;padding:3px 6px !important;' +
+        'border-radius:10px !important;transition:background .16s ease !important;}',
+      '.dshwv-menu-row:hover{background:rgba(32,49,112,.08) !important;}',
+      // —— ☰ 按钮：玻璃圆角方块 ——
+      '.dshwv-menu-btn{background:rgba(32,49,112,.72) !important;' +
+        'backdrop-filter:blur(10px) saturate(1.4) !important;' +
+        'border:1px solid rgba(255,255,255,.4) !important;border-radius:9px !important;' +
+        'box-shadow:0 4px 14px rgba(21,36,84,.32),inset 0 1px 0 rgba(255,255,255,.35) !important;' +
+        'transition:transform .16s ease,background .16s ease,box-shadow .16s ease !important;}',
+      '.dshwv-menu-btn:hover{background:rgba(47,68,136,.85) !important;transform:scale(1.08) !important;' +
+        'box-shadow:0 6px 18px rgba(21,36,84,.4) !important;}',
+      // —— 深蓝 pill 按钮（全局设置/按压泡泡设置/自定义/管理/小鲸鱼记账）——
+      '.dshwv-roleimport{background:linear-gradient(180deg,rgba(52,74,148,.94),rgba(32,49,112,.94)) !important;' +
+        'border:1px solid rgba(255,255,255,.3) !important;border-radius:10px !important;' +
+        'padding:4px 12px !important;font-weight:600 !important;' +
+        'box-shadow:0 3px 8px rgba(21,36,84,.3),inset 0 1px 0 rgba(255,255,255,.28) !important;' +
+        'transition:transform .16s ease,box-shadow .16s ease,filter .16s ease !important;}',
+      '.dshwv-roleimport:hover{filter:brightness(1.14) !important;transform:translateY(-1px) !important;' +
+        'box-shadow:0 6px 16px rgba(21,36,84,.38) !important;}',
+      '.dshwv-roleimport:active{transform:translateY(0) !important;filter:brightness(.94) !important;}',
+      // —— 浅色玻璃控件（音效组选择/打开网页端按钮）——
+      '.dshwv-audiobtn,.dshpet-openweb-btn{background:rgba(255,255,255,.55) !important;' +
+        'border:1px solid rgba(32,49,112,.22) !important;border-radius:10px !important;' +
+        'transition:background .16s ease,transform .16s ease !important;}',
+      '.dshwv-audiobtn:hover,.dshpet-openweb-btn:hover{background:rgba(255,255,255,.82) !important;' +
+        'transform:translateY(-1px) !important;}',
+      // —— 输入控件：统一主题色 + 玻璃底 ——
+      '.dshwv-range,.dshwv-check{accent-color:#2f4488 !important;}',
+      '.dshwv-number{background:rgba(255,255,255,.62) !important;' +
+        'border:1px solid rgba(32,49,112,.2) !important;border-radius:8px !important;}',
+      // —— 三级浮层列表（角色/音效组/卡槽）：同款玻璃 ——
+      '.dshwv-rolelist,.dshwv-audiolist,.dshwv-slotlist{' +
+        'background:linear-gradient(150deg,rgba(255,255,255,.8),rgba(238,244,255,.66)) !important;' +
+        'backdrop-filter:blur(14px) saturate(1.5) !important;' +
+        '-webkit-backdrop-filter:blur(14px) saturate(1.5) !important;' +
+        'border:1px solid rgba(255,255,255,.62) !important;border-radius:14px !important;' +
+        'box-shadow:0 14px 38px rgba(21,36,84,.24),inset 0 1px 0 rgba(255,255,255,.85) !important;}',
+      // —— 弹窗卡片（全局设置/按压泡泡设置/自定义等）——
+      '.dshwv-bubcard,.dshwv-snapwin{' +
+        'background:linear-gradient(152deg,rgba(255,255,255,.88),rgba(240,245,255,.78)) !important;' +
+        'backdrop-filter:blur(16px) saturate(1.4) !important;' +
+        '-webkit-backdrop-filter:blur(16px) saturate(1.4) !important;' +
+        'border:1px solid rgba(255,255,255,.66) !important;border-radius:16px !important;' +
+        'box-shadow:0 18px 48px rgba(21,36,84,.24),inset 0 1px 0 rgba(255,255,255,.9) !important;}',
+      '.dshwv-bubtitle,.dshwv-snaptitle{font-weight:700 !important;}' +
+        '',
+      // —— 拖动手柄：融进玻璃语言 ——
+      '.dshpet-draggrip{background:rgba(32,49,112,.06) !important;' +
+        'border:1px solid rgba(32,49,112,.16) !important;border-radius:8px !important;}',
+      '.dshpet-draggrip:hover{background:rgba(32,49,112,.14) !important;}',
     ].join('')
     document.head.appendChild(st)
   }
