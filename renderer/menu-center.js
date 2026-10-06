@@ -118,6 +118,116 @@
         'box-shadow:0 18px 48px rgba(21,36,84,.24),inset 0 1px 0 rgba(255,255,255,.9) !important;}',
       '.dshwv-bubtitle,.dshwv-snaptitle{font-weight:700 !important;}' +
         '',
+
+      // ============ 二级/三级菜单统一液态玻璃（第二波覆盖）============
+      // 「偷吃白饭」与「形象与互动」共用 .dshrice-menu（后者整个借用该类）；
+      // 「小鲸鱼记账」= 菜单内子界面 .dshwv-usage-sub + 用量记录弹窗
+      // .dshwv-usage-card + 浮动面板 .dshwv-usagepanel；再加音效编辑/确认/
+      // GIF/截图/重置等全部浮层与自绘下拉。配方与 ☰ 菜单同款。
+      // ⚠️ .dshrice-menu / .dshwv-usagepanel 自身 overflow-y:auto，
+      //    ::before 高光会随内容滚走，所以这两个的玻璃质感直接做进背景
+      //    渐变里，不加伪元素；其余不滚动的卡片同理也走渐变（少一层伪
+      //    元素定位风险）。
+      // —— 偷吃白饭 / 形象与互动：面板盒 ——
+      '.dshrice-menu{' +
+        'background:linear-gradient(148deg,rgba(255,255,255,.78) 0%,rgba(238,244,255,.6) 52%,rgba(255,255,255,.68) 100%) !important;' +
+        'backdrop-filter:blur(16px) saturate(1.6) !important;' +
+        '-webkit-backdrop-filter:blur(16px) saturate(1.6) !important;' +
+        'border:1px solid rgba(255,255,255,.66) !important;' +
+        'border-radius:16px !important;' +
+        'box-shadow:0 16px 44px rgba(21,36,84,.24),0 2px 8px rgba(21,36,84,.1),' +
+          'inset 0 1px 0 rgba(255,255,255,.9),inset 0 -1px 0 rgba(255,255,255,.3) !important;' +
+        '}',
+      // 分组分隔线调淡、行悬停高亮（与 ☰ 菜单行同一手感）
+      '.dshrice-menu .dshrice-grp{border-top:1px solid rgba(32,49,112,.14) !important;}',
+      '.dshrice-menu .dshrice-row{border-radius:10px !important;' +
+        'transition:background .16s ease !important;}',
+      '.dshrice-menu .dshrice-row:hover{background:rgba(32,49,112,.08) !important;}',
+      '.dshrice-menu button.dshrice-grp-h{border-radius:10px !important;' +
+        'transition:background .16s ease !important;}',
+      '.dshrice-menu button.dshrice-grp-h:hover{background:rgba(32,49,112,.08) !important;}',
+      // 页脚（保存/重置常驻条）：从纯白改成磨砂玻璃贴片
+      '.dshrice-menu .dshrice-foot{background:rgba(255,255,255,.55) !important;' +
+        'backdrop-filter:blur(10px) saturate(1.4) !important;' +
+        '-webkit-backdrop-filter:blur(10px) saturate(1.4) !important;' +
+        'border-top:1px solid rgba(32,49,112,.14) !important;border-radius:12px !important;' +
+        'padding:7px 8px 4px !important;}',
+      // 面板内按钮：浅色玻璃；激活态深蓝玻璃；保存=绿玻璃、试吃=琥珀玻璃
+      //（保留原语义配色，只换质感）
+      '.dshrice-menu button{background:rgba(255,255,255,.6) !important;' +
+        'border:1px solid rgba(32,49,112,.2) !important;border-radius:9px !important;' +
+        'transition:background .16s ease,transform .16s ease,box-shadow .16s ease !important;}',
+      '.dshrice-menu button:hover{background:rgba(255,255,255,.9) !important;}',
+      // 彩色按钮悬停保持本色，只做提亮（不被上面的白玻璃悬停盖掉）
+      '.dshrice-menu button.dshrice-on:hover,' +
+        '.dshrice-menu button.dshrice-save:hover,.dshrice-menu button.dshrice-try:hover{' +
+        'filter:brightness(1.12) !important;}',
+      '.dshrice-menu button:active{transform:translateY(1px) !important;}',
+      '.dshrice-menu button.dshrice-on{' +
+        'background:linear-gradient(180deg,rgba(52,74,148,.94),rgba(32,49,112,.94)) !important;' +
+        'border-color:rgba(255,255,255,.3) !important;color:#fff !important;' +
+        'box-shadow:0 2px 8px rgba(21,36,84,.3),inset 0 1px 0 rgba(255,255,255,.28) !important;}',
+      '.dshrice-menu button.dshrice-save{' +
+        'background:linear-gradient(180deg,rgba(63,138,92,.94),rgba(47,107,70,.94)) !important;' +
+        'border-color:rgba(255,255,255,.3) !important;' +
+        'box-shadow:0 2px 8px rgba(24,58,40,.28),inset 0 1px 0 rgba(255,255,255,.28) !important;}',
+      '.dshrice-menu button.dshrice-try{' +
+        'background:linear-gradient(180deg,rgba(169,112,42,.94),rgba(138,90,31,.94)) !important;' +
+        'border-color:rgba(255,255,255,.3) !important;' +
+        'box-shadow:0 2px 8px rgba(80,52,14,.28),inset 0 1px 0 rgba(255,255,255,.28) !important;}',
+      // 「唱歌按住」的按下态要赢过 button:hover 的上浮
+      '.dshrice-menu button.dshrice-sing.dshrice-on{transform:translateY(1px) !important;' +
+        'box-shadow:inset 0 2px 4px rgba(0,0,0,.4) !important;}',
+      // 输入控件：统一主题色 + 玻璃底（形象与互动的数字框也走这条）
+      '.dshrice-menu input[type=checkbox],.dshrice-menu input[type=range]{accent-color:#2f4488 !important;}',
+      '.dshrice-menu input[type=number]{background:rgba(255,255,255,.62) !important;' +
+        'border:1px solid rgba(32,49,112,.2) !important;border-radius:8px !important;}',
+      // —— 小鲸鱼记账：菜单内子界面的设置区与输入控件 ——
+      '.dshwv-usageset{border:1px dashed rgba(32,49,112,.24) !important;' +
+        'border-radius:10px !important;background:rgba(255,255,255,.4) !important;}',
+      '.dshwv-usagemsg,.dshwv-msgtext{background:rgba(255,255,255,.66) !important;' +
+        'border:1px solid rgba(32,49,112,.2) !important;border-radius:8px !important;}',
+      '.dshwv-usage-scroll{background:rgba(255,255,255,.45) !important;' +
+        'border:1px solid rgba(32,49,112,.12) !important;border-radius:10px !important;}',
+      '.dshwv-usage-more{background:rgba(255,255,255,.5) !important;' +
+        'border:1px solid rgba(32,49,112,.22) !important;border-radius:9px !important;' +
+        'transition:background .16s ease !important;}',
+      '.dshwv-usage-more:hover{background:rgba(255,255,255,.85) !important;}',
+      '.dshwv-usageset input[type=checkbox],.dshwv-usagebody input[type=checkbox]{accent-color:#2f4488 !important;}',
+      // —— 记账浮层：用量记录弹窗卡片 + 浮动用量面板 ——
+      '.dshwv-usage-card,.dshwv-usagepanel{' +
+        'background:linear-gradient(152deg,rgba(255,255,255,.88),rgba(240,245,255,.78)) !important;' +
+        'backdrop-filter:blur(16px) saturate(1.4) !important;' +
+        '-webkit-backdrop-filter:blur(16px) saturate(1.4) !important;' +
+        'border:1px solid rgba(255,255,255,.66) !important;' +
+        'box-shadow:0 18px 48px rgba(21,36,84,.24),inset 0 1px 0 rgba(255,255,255,.9) !important;}',
+      '.dshwv-usage-card{border-radius:16px !important;}',
+      '.dshwv-usagepanel{border-radius:16px !important;}',
+      // —— 其余三级浮层：音效编辑/确认/GIF/截图/重置卡片，同款玻璃 ——
+      '.dshwv-audiowin,.dshwv-confirmwin,.dshwv-gifwin,.dshwv-cropwin,.dshwv-rescard{' +
+        'background:linear-gradient(152deg,rgba(255,255,255,.88),rgba(240,245,255,.78)) !important;' +
+        'backdrop-filter:blur(16px) saturate(1.4) !important;' +
+        '-webkit-backdrop-filter:blur(16px) saturate(1.4) !important;' +
+        'border:1px solid rgba(255,255,255,.66) !important;border-radius:16px !important;' +
+        'box-shadow:0 18px 48px rgba(21,36,84,.24),inset 0 1px 0 rgba(255,255,255,.9) !important;}',
+      // —— 自绘下拉（跑马灯方案等）：与三级列表同款玻璃 ——
+      '.dshwv-rgbmenu{background:linear-gradient(150deg,rgba(255,255,255,.8),rgba(238,244,255,.66)) !important;' +
+        'backdrop-filter:blur(12px) saturate(1.5) !important;' +
+        '-webkit-backdrop-filter:blur(12px) saturate(1.5) !important;' +
+        'border:1px solid rgba(255,255,255,.62) !important;border-radius:12px !important;' +
+        'box-shadow:0 14px 38px rgba(21,36,84,.24),inset 0 1px 0 rgba(255,255,255,.85) !important;}',
+      '.dshwv-rgbhead{background:rgba(255,255,255,.62) !important;' +
+        'border:1px solid rgba(32,49,112,.2) !important;border-radius:8px !important;}',
+      // 音效编辑窗里的行内输入框统一玻璃底
+      '.dshwv-audiorow input{background:rgba(255,255,255,.62) !important;' +
+        'border:1px solid rgba(32,49,112,.2) !important;border-radius:8px !important;}',
+      // —— ☰ 菜单里的三个后加入口（偷吃白饭/形象与互动/打开桌宠）：
+      //      与「打开 dsh 网页端」同一浅色玻璃观感 ——
+      '.dshpet-rice-row,.dshpet-exp-btn,.dshpet-spawn-btn{' +
+        'background:rgba(255,255,255,.55) !important;border-radius:10px !important;' +
+        'transition:background .16s ease,transform .16s ease !important;}',
+      '.dshpet-rice-row:hover,.dshpet-exp-btn:hover,.dshpet-spawn-btn:hover{' +
+        'background:rgba(255,255,255,.82) !important;}',
       // —— 拖动手柄：融进玻璃语言 ——
       '.dshpet-draggrip{background:rgba(32,49,112,.06) !important;' +
         'border:1px solid rgba(32,49,112,.16) !important;border-radius:8px !important;}',
