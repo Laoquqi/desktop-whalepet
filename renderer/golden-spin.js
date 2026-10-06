@@ -63,6 +63,14 @@
   function pushAngle() {
     var x = xf()
     if (!x) return
+    // ⚠️ 回旋的 transform 写入必须**即时**。点击 Q 弹（pet-collide）/吃文件
+    //    （file-eater）/换装（rice-role）的弹性动画会给 img 留下
+    //    `transition: transform .28s` 且不清除 —— 回旋转完把 rotate(-360°)
+    //    清回 0° 时，这个残留过渡会把"复位"补间成**整整一圈反向回转**
+    //    （用户报的"转完一圈还会倒转一圈"）。Q 弹们每次写入前都自己显式
+    //    设 transition，不依赖这里的残留值，所以关掉不影响它们的弹性。
+    var img = document.querySelector('img.dshwv-img')
+    if (img) { try { img.style.transition = 'none' } catch (e) {} }
     if (!active) { x.clear('spin'); return }
     x.set('spin', x.rotate(angleDeg))
   }

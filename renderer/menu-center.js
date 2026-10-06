@@ -92,11 +92,11 @@
       '.dshwv-roleimport:hover{filter:brightness(1.14) !important;transform:translateY(-1px) !important;' +
         'box-shadow:0 6px 16px rgba(21,36,84,.38) !important;}',
       '.dshwv-roleimport:active{transform:translateY(0) !important;filter:brightness(.94) !important;}',
-      // —— 浅色玻璃控件（音效组选择/打开网页端按钮）——
-      '.dshwv-audiobtn,.dshpet-openweb-btn{background:rgba(255,255,255,.55) !important;' +
+      // —— 浅色玻璃控件（音效组选择）——
+      '.dshwv-audiobtn{background:rgba(255,255,255,.55) !important;' +
         'border:1px solid rgba(32,49,112,.22) !important;border-radius:10px !important;' +
         'transition:background .16s ease,transform .16s ease !important;}',
-      '.dshwv-audiobtn:hover,.dshpet-openweb-btn:hover{background:rgba(255,255,255,.82) !important;' +
+      '.dshwv-audiobtn:hover{background:rgba(255,255,255,.82) !important;' +
         'transform:translateY(-1px) !important;}',
       // —— 输入控件：统一主题色 + 玻璃底 ——
       '.dshwv-range,.dshwv-check{accent-color:#2f4488 !important;}',
@@ -221,13 +221,48 @@
       // 音效编辑窗里的行内输入框统一玻璃底
       '.dshwv-audiorow input{background:rgba(255,255,255,.62) !important;' +
         'border:1px solid rgba(32,49,112,.2) !important;border-radius:8px !important;}',
-      // —— ☰ 菜单里的三个后加入口（偷吃白饭/形象与互动/打开桌宠）：
-      //      与「打开 dsh 网页端」同一浅色玻璃观感 ——
-      '.dshpet-rice-row,.dshpet-exp-btn,.dshpet-spawn-btn{' +
-        'background:rgba(255,255,255,.55) !important;border-radius:10px !important;' +
-        'transition:background .16s ease,transform .16s ease !important;}',
-      '.dshpet-rice-row:hover,.dshpet-exp-btn:hover,.dshpet-spawn-btn:hover{' +
-        'background:rgba(255,255,255,.82) !important;}',
+      // —— 六个后加入口按键：统一液态玻璃按键 ——
+      // 偷吃白饭/形象与互动/打开桌宠/打开 dsh 网页端/黄金回旋/吃掉统计。
+      // 有意与挂件自带的深蓝 pill（.dshwv-roleimport）区分：自带的是深蓝
+      // 实底，这六个是磨砂白玻璃块。黄金回旋/吃掉统计两个按钮是行内样式
+      // 创建的（golden-spin.js/file-eater.js），这里用 !important 统一接管。
+      '.dshpet-rice-row,.dshpet-exp-btn,.dshpet-spawn-btn,.dshpet-openweb-btn,' +
+        '.dshpet-spin-row>button,.dshpet-eat-row>button{' +
+        'display:inline-flex !important;align-items:center !important;gap:4px !important;' +
+        'padding:3px 11px !important;' +
+        'background:linear-gradient(180deg,rgba(255,255,255,.72),rgba(240,245,255,.5)) !important;' +
+        'backdrop-filter:blur(10px) saturate(1.5) !important;' +
+        '-webkit-backdrop-filter:blur(10px) saturate(1.5) !important;' +
+        'border:1px solid rgba(255,255,255,.75) !important;border-radius:10px !important;' +
+        'box-shadow:0 3px 10px rgba(21,36,84,.16),inset 0 1px 0 rgba(255,255,255,.9),' +
+          'inset 0 -1px 0 rgba(255,255,255,.35) !important;' +
+        'transition:background .16s ease,transform .16s ease,box-shadow .16s ease !important;}',
+      '.dshpet-rice-row:hover,.dshpet-exp-btn:hover,.dshpet-spawn-btn:hover,' +
+        '.dshpet-openweb-btn:hover,.dshpet-spin-row>button:hover,.dshpet-eat-row>button:hover{' +
+        'background:linear-gradient(180deg,rgba(255,255,255,.92),rgba(240,245,255,.75)) !important;' +
+        'transform:translateY(-1px) !important;' +
+        'box-shadow:0 6px 16px rgba(21,36,84,.22),inset 0 1px 0 rgba(255,255,255,.95) !important;}',
+      '.dshpet-rice-row:active,.dshpet-exp-btn:active,.dshpet-spawn-btn:active,' +
+        '.dshpet-openweb-btn:active,.dshpet-spin-row>button:active,.dshpet-eat-row>button:active{' +
+        'transform:translateY(0) !important;filter:brightness(.96) !important;}',
+      // —— 「甩出力度」右侧选项栏：圆角玻璃下拉 ——
+      // 原生 <select>：去掉系统默认外观，自绘箭头，配色跟随菜单主题。
+      '.dshpet-strength-row{display:flex !important;align-items:center !important;gap:6px !important;' +
+        'margin:4px -6px !important;padding:3px 6px !important;border-radius:10px !important;' +
+        'transition:background .16s ease !important;}',
+      '.dshpet-strength-row:hover{background:rgba(32,49,112,.08) !important;}',
+      '.dshpet-strength-row select{' +
+        'appearance:none !important;-webkit-appearance:none !important;' +
+        'background-color:rgba(255,255,255,.62) !important;' +
+        'background-image:url("data:image/svg+xml,%3Csvg xmlns=\'http://www.w3.org/2000/svg\' width=\'10\' height=\'6\'%3E%3Cpath d=\'M1 1l4 4 4-4\' stroke=\'%23536ba9\' stroke-width=\'1.5\' fill=\'none\' stroke-linecap=\'round\' stroke-linejoin=\'round\'/%3E%3C/svg%3E") !important;' +
+        'background-repeat:no-repeat !important;background-position:right 7px center !important;' +
+        'background-size:10px 6px !important;' +
+        'border:1px solid rgba(32,49,112,.2) !important;border-radius:9px !important;' +
+        'padding:2px 24px 2px 9px !important;color:#203170 !important;' +
+        'font:12px/1.4 inherit !important;cursor:pointer !important;color-scheme:light !important;' +
+        'box-shadow:0 1px 4px rgba(21,36,84,.12),inset 0 1px 0 rgba(255,255,255,.85) !important;' +
+        'transition:background-color .16s ease !important;}',
+      '.dshpet-strength-row select:hover{background-color:rgba(255,255,255,.88) !important;}',
       // —— 拖动手柄：融进玻璃语言 ——
       '.dshpet-draggrip{background:rgba(32,49,112,.06) !important;' +
         'border:1px solid rgba(32,49,112,.16) !important;border-radius:8px !important;}',
