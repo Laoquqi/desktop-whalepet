@@ -280,6 +280,16 @@
         'box-shadow:0 1px 4px rgba(21,36,84,.12),inset 0 1px 0 rgba(255,255,255,.85) !important;' +
         'transition:background-color .16s ease !important;}',
       '.dshpet-strength-row select:hover{background-color:rgba(255,255,255,.88) !important;}',
+      // —— 全屏遮罩改为点击穿透：面板现在贴着 ☰ 菜单打开，遮罩若还整窗
+      //      拦点击，菜单行/她/空白关闭就全被一层**透明图层**挡死（实测踩坑）。
+      //      遮罩只负责承载卡片，点击全部放行；卡片自己照常可点。
+      '.dshwv-bubmask,.dshwv-usage-mask,.dshwv-resmask,.dshwv-confirmmask,' +
+        '.dshwv-audiomask,.dshwv-gifmask,.dshwv-cropmask,.dshwv-snapmask{' +
+        'pointer-events:none !important;}',
+      '.dshwv-bubmask .dshwv-bubcard,.dshwv-bubcard,.dshwv-snapwin,.dshwv-usage-card,' +
+        '.dshwv-rescard,.dshwv-audiowin,.dshwv-confirmwin,.dshwv-gifwin,.dshwv-cropwin,' +
+        '.dshwv-bubmask .dshwv-bubclose{' +
+        'pointer-events:auto !important;}',
       // —— 拖动手柄：融进玻璃语言 ——
       '.dshpet-draggrip{background:rgba(32,49,112,.06) !important;' +
         'border:1px solid rgba(32,49,112,.16) !important;border-radius:8px !important;}',
@@ -419,8 +429,9 @@
 
   // 屏幕工作区在**视口坐标**里的可视范围（窗口可能半截在屏幕外，
   // 能画出来的区域 = 视口 ∩ 屏幕工作区 —— 钳制只认这个交集）
-  function visibleRect() {
-    var oX = window.screenX || 0, oY = window.screenY || 0
+  function visibleRect(ox0, oy0) {
+    var oX = ox0 !== undefined ? ox0 : (window.screenX || 0)
+    var oY = oy0 !== undefined ? oy0 : (window.screenY || 0)
     var avL = 0, avT = 0, avW = window.innerWidth, avH = window.innerHeight
     try {
       if (window.screen) {
@@ -453,46 +464,155 @@
     return 'mid'
   }
 
-  function placeMenuBox() {
+  // ========================================================================
+  // ④ 菜单窗口平移（上方区"正下方" / 中间区偏左侧的"右侧"）
+  // ========================================================================
+  // 她脚底以下、她右缘以右都在窗口外——那里要摆菜单就只能把窗口临时挪过去。
+  // 做法：菜单打开期间把窗口平移 Δ（**尺寸不变**，视频不受影响），同时把
+  // 立绘的「钉住位」从 right:0/bottom:0 改成 right:Δx/bottom:Δy ——
+  // ⚠️ 钉住位是 drag-physics 的 restorePinnedRoot 用 !important 每 100ms 写死
+  //    的（"根必须一直钉在窗口右下"是它的核心不变量），**不能自己去写
+  //    left/top 跟它抢**（实测会被碾掉）——正确做法就是旧"窗口生长"的结论：
+  //    让 restorePinnedRoot 感知 __dshpetMenuShiftDelta，钉住位=Δ。这边只负责
+  //    设偏移量、挪窗口、复位。
+  // ⚠️ 分区（openZone）**每次打开只判一次并冻结**：平移落定前的过渡帧里
+  //    "窗口已动、补偿未生效"，实时重算会把 top 误判成 bottom → 释放平移 →
+  //    下一轮又判成 top → 再平移……无限乒乓（实测窗口来回弹）。
+  var shift = null   // { dx, dy, ox, oy, dir: 'below'|'right', landed, failed }
+  function shiftActive() { return !!(shift && !shift.failed) }
+
+  function writePin(dx, dy) {
+    var root = document.querySelector('.dshwv-root')
+    if (!root) return
+    try {
+      root.style.setProperty('left', 'auto', 'important')
+      root.style.setProperty('top', 'auto', 'important')
+      root.style.setProperty('right', Math.round(dx) + 'px', 'important')
+      root.style.setProperty('bottom', Math.round(dy) + 'px', 'important')
+    } catch (e) {}
+  }
+
+  function ensureShift(zone, art, menu) {
+    var menuW = Math.max(menu.offsetWidth, menu.scrollWidth)
+    var menuH = Math.max(menu.offsetHeight, menu.scrollHeight)
+    var wantDx = 0, wantDy = 0, dir = null
+    if (zone === 'top') {
+      // 菜单要完整落到她脚底下方：窗口向下挪 menuH + 间隙
+      wantDy = menuH + 12
+      dir = 'below'
+    } else if (zone === 'mid') {
+      // 她在屏幕左半 → 菜单开她右侧：窗口右缘要伸到她右缘 + 菜单宽 + 间隙
+      // ⚠️ 用**平移前**的立绘右缘算需求：补偿生效后 art.right 已含 -Δ，
+      //    直接拿它算会得出"Δ 越大需求越小"的自引用 → Δ 在 131↔0 间振荡
+      //    （窗口来回弹，实测踩坑）。
+      var oX = window.screenX || 0
+      var avL = 0, avW = window.innerWidth
+      try { if (window.screen) { avL = window.screen.availLeft || 0; if (window.screen.availWidth) avW = window.screen.availWidth } } catch (e) {}
+      var centerX = art.left + (window.screenX || 0) + art.width / 2
+      if (centerX < avL + avW / 2) {
+        var artRight0 = art.right + (shift ? shift.dx : 0)
+        wantDx = Math.max(0, menuW + 16 - (window.innerWidth - artRight0))
+        dir = 'right'
+        // 她偏高时窗口可视高度可能装不下菜单 → 组合向下平移。
+        // ⚠️ 按**平移前**的原点算可视高度（和 artRight0 同一个道理，
+        //    否则 Δ 自己影响需求 → 振荡）
+        var bx = shift ? shift.ox : (window.screenX || 0)
+        var by = shift ? shift.oy : (window.screenY || 0)
+        var vis0 = visibleRect(bx, by)
+        wantDy = Math.max(0, menuH + 16 - (vis0.b - vis0.t))
+      }
+    }
+    if (!dir) { if (shift) releaseShift(); return }
+    if (shift && shift.failed) return   // 本次打开已失败 → 兜底方案，不再重试
+    if (shift && shift.dir === dir) {
+      // 已在平移：菜单尺寸变了就微调 Δ
+      if (Math.abs(wantDx - shift.dx) > 8 || Math.abs(wantDy - shift.dy) > 8) {
+        shift.dx = wantDx; shift.dy = wantDy
+        window.__dshpetMenuShiftDelta = { dx: shift.dx, dy: shift.dy }
+        writePin(shift.dx, shift.dy)
+        try { window.petApi.moveWindow({ x: shift.ox + shift.dx, y: shift.oy + shift.dy }) } catch (e) {}
+      }
+      return
+    }
+    if (shift) releaseShift()
+    var ox = window.screenX || 0, oy = window.screenY || 0
+    shift = { dx: wantDx, dy: wantDy, ox: ox, oy: oy, dir: dir, landed: false, failed: false }
+    window.__dshpetMenuShift = true
+    window.__dshpetMenuShiftDelta = { dx: wantDx, dy: wantDy }
+    writePin(wantDx, wantDy)   // 立刻换钉住位（物理层的周期重钉会写同样的值）
+    try { window.petApi.moveWindow({ x: ox + wantDx, y: oy + wantDy }) } catch (e) { shift.failed = true }
+    // 等窗口真的挪过去（rAF 轮询 screenX/Y），落定后重摆一次；600ms 兜底放弃
+    var t0 = Date.now()
+    ;(function poll() {
+      if (!shift || shift.landed) return
+      var gx = Math.abs((window.screenX || 0) - (shift.ox + shift.dx))
+      var gy = Math.abs((window.screenY || 0) - (shift.oy + shift.dy))
+      if (gx < 2 && gy < 2) {
+        shift.landed = true
+        schedulePlace()
+        return
+      }
+      if (Date.now() - t0 > 600) { shift.failed = true; return }
+      requestAnimationFrame(poll)
+    })()
+  }
+
+  function releaseShift() {
+    if (!shift) return
+    var s = shift
+    shift = null
+    openZone = null
+    window.__dshpetMenuShift = false
+    // ⚠️ 实际动作放进 rAF（与打开路径同款时序）：同一次 rAF 里先撤钉住位、
+    //    再挪窗，两个变化落在同一次绘制里。600ms 兜底强制撤。
+    requestAnimationFrame(function () {
+      window.__dshpetMenuShiftDelta = { dx: 0, dy: 0 }
+      writePin(0, 0)
+      try { window.petApi.moveWindow({ x: s.ox, y: s.oy }) } catch (e) {}
+    })
+  }
+
+  function placeMenuBox(zone, art) {
     var menu = document.querySelector('.dshwv-menu')
-    var img = document.querySelector('img.dshwv-img')
-    if (!menu || !img) return null
-    var art = img.getBoundingClientRect()
-    if (!art || art.width < 2) return null
+    if (!menu) return null
     var vis = visibleRect()
-    var zone = pickZone(art)
     var mw = menu.offsetWidth, mh = menu.offsetHeight
-    // 菜单的底边锚点 + 可用高度上限（上限只在上区贴身时真的会触发）
-    var bottomAnchor, capH
-    if (zone === 'bottom') { bottomAnchor = art.top - 6; capH = bottomAnchor - vis.t - 4 }
-    else if (zone === 'top') { bottomAnchor = art.bottom; capH = bottomAnchor - vis.t - 4 }
-    else { bottomAnchor = -1; capH = vis.b - vis.t - 8 }
-    // ⚠️ 用**自然内容高度**（scrollHeight）判定要不要裁：若拿已裁剪的
-    //    offsetHeight 判，219>219 不成立 → 下一轮又把 cap 撤了 → 加了又撤
-    //    每帧振荡（实测菜单在"219px/629px"之间来回抽搐）。
-    var naturalH = Math.max(menu.offsetHeight, menu.scrollHeight)
-    if (capH > 100 && naturalH > capH) {
-      setImp(menu, 'max-height', Math.round(capH) + 'px')
-      setImp(menu, 'overflow-y', 'auto')
-      mh = Math.min(mh, Math.round(capH))
-    } else {
+    var left, top
+    if (zone === 'top' && shiftActive() && shift.dir === 'below') {
+      // 窗口已下移：菜单完整落在她脚底正下方，**正常大小不裁剪**
+      top = art.bottom + 8
+      left = (art.left + art.right) / 2 - mw / 2
       unsetImp(menu, 'max-height')
       unsetImp(menu, 'overflow-y')
-      mh = menu.offsetHeight
-    }
-    var left, top
-    if (zone === 'mid') {
-      // 她右缘=窗口右缘，右侧永远没空间 → 一律开在她的左侧
-      left = art.left - 8 - mw
+    } else if (zone === 'top') {
+      // 平移不可用（IPC 失败/超时）的兜底：贴身向上 + 裁高内滚
+      var capH = art.bottom - vis.t - 4
+      var naturalH = Math.max(mh, menu.scrollHeight)
+      if (capH > 100 && naturalH > capH) {
+        setImp(menu, 'max-height', Math.round(capH) + 'px')
+        setImp(menu, 'overflow-y', 'auto')
+        mh = Math.min(mh, Math.round(capH))
+      }
+      top = art.bottom - mh
+      left = (art.left + art.right) / 2 - mw / 2
+    } else if (zone === 'mid') {
+      if (shiftActive() && shift.dir === 'right') {
+        left = art.right + 8            // 窗口已右移：菜单开在她右侧
+        setImp(menu, 'transform-origin', 'left center')
+      } else {
+        left = art.left - 8 - mw        // 有空间的一侧（她的左侧）
+        setImp(menu, 'transform-origin', 'right center')
+      }
       top = (art.top + art.bottom) / 2 - mh / 2
     } else {
+      top = art.top - 6 - mh
       left = (art.left + art.right) / 2 - mw / 2
-      top = bottomAnchor - mh
+      setImp(menu, 'transform-origin', 'center bottom')
     }
     // 越出屏幕就收进来（收不干净时允许压住她，绝不跑出桌面）
     left = Math.max(vis.l + 4, Math.min(left, vis.r - mw - 4))
     top = Math.max(vis.t + 4, Math.min(top, vis.b - mh - 4))
-    setImp(menu, 'transform-origin', zone === 'mid' ? 'right center' : 'center bottom')
+    if (zone !== 'mid') setImp(menu, 'transform-origin', zone === 'top' && shiftActive() ? 'center top' : 'center bottom')
     moveTo(menu, left, top, false)
     return { l: left, t: top, r: left + mw, b: top + mh, w: mw, h: mh }
   }
@@ -516,14 +636,17 @@
   }
 
   // 菜单开着时要摆到菜单边上的二级/三级面板。
+  // ⚠️ **偷吃白饭 / 形象与互动不接管**（实测教训）：rice 的 placeMenu 每 700ms
+  //    重写 left/top、rice-entry 另有 transform 避让、形象与互动每 400ms 自己
+  //    贴住菜单 —— 我们再用 important 写 left/top 就成了三个写者打架，面板每
+  //    秒在两个位置间乒乓（"一闪一闪"、按钮在指针底下跳、点了没反应）。
+  //    它们各自的避让逻辑本来就是为"避开 ☰ 菜单"设计的，交还给它们。
   // .dshwv-menu 内部的子界面（记账 .dshwv-usage-sub / 菜单视图）跟着菜单盒
   // 走，不用管；自绘下拉（.dshwv-rgbmenu 系）锚在自己的行上，也不挪。
   var FLOAT_SEL = [
     '.dshwv-rolelist', '.dshwv-audiolist', '.dshwv-slotlist',
     '.dshwv-linepanel', '.dshwv-custmenu', '.dshwv-fontmenu',
     '.dshwv-qcolmenu', '.dshwv-usagepanel',
-    '.dshrice-menu.dshrice-open',   // 偷吃白饭
-    '.dshpet-exp-panel',            // 形象与互动
   ].join(',')
   var CARD_SEL = [
     '.dshwv-bubcard', '.dshwv-snapwin', '.dshwv-usage-card',
@@ -611,8 +734,28 @@
     for (var i = 0; i < els.length; i++) clearOwned(els[i])
   }
 
+  var openZone = null   // 本次菜单打开判定的分区（冻结，防过渡帧误判）
+
   function placeAll() {
-    var mr = placeMenuBox()
+    var menu = document.querySelector('.dshwv-menu')
+    var img = document.querySelector('img.dshwv-img')
+    if (!menu || !img) return null
+    var art = img.getBoundingClientRect()
+    if (!art || art.width < 2) return null
+    if (!openZone) openZone = pickZone(art)
+    var zone = openZone
+    ensureShift(zone, art, menu)
+    // 平移未落定时用「预期立绘矩形」（补偿后的视口位置）摆菜单——
+    // 视口坐标与窗口位置无关，先写终值，窗口挪过去的同一瞬间就是对的
+    var artP = art
+    if (shiftActive() && !shift.landed) {
+      artP = {
+        left: art.left - shift.dx, top: art.top - shift.dy,
+        right: art.right - shift.dx, bottom: art.bottom - shift.dy,
+        width: art.width, height: art.height,
+      }
+    }
+    var mr = placeMenuBox(zone, artP)
     if (mr) placePanels(mr)
   }
 
@@ -638,7 +781,7 @@
     menuObs = new MutationObserver(function () {
       var m = document.querySelector('.dshwv-menu')
       if (m && m.classList.contains('dshwv-menu-open')) schedulePlace()
-      else zoneCleanup()
+      else { openZone = null; releaseShift(); zoneCleanup() }
     })
     menuObs.observe(menu, { attributes: true, attributeFilter: ['class', 'style'], subtree: true })
     return true

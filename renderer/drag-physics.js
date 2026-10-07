@@ -564,6 +564,10 @@
     //    节流：四舍五入后没变就不发（空闲时零 IPC）。
     var mx = Math.round(physPos[0]), my = Math.round(physPos[1])
     if (mx === lastSentX && my === lastSentY) return
+    // ⚠️ 菜单窗口平移期间忽略物理驱动（menu-center 分区定位把窗口临时挪开
+    //    给菜单腾地方，物理若插手会把窗口拽回去）。不更新 lastSent，
+    //    窗口复位后下一轮物理照常把真实位置发出去。
+    if (window.__dshpetMenuShift) return
     lastSentX = mx; lastSentY = my
     try {
       if (window.petApi && window.petApi.moveWindow) {
@@ -1669,6 +1673,10 @@
   }
     function restorePinnedRoot() {
       if (!root) return
+      // ⚠️ 菜单窗口平移期间（menu-center 分区定位）钉住位带 Δ 偏移：
+      //    窗口被临时挪开给菜单腾地方，根反向偏移才能让她视觉上原地不动。
+      var md = window.__dshpetMenuShiftDelta || null
+      var dx = (md && md.dx) || 0, dy = (md && md.dy) || 0
       // ⚠️⚠️ **不能只 removeProperty —— 必须带 !important 主动写死。**
       //
       //    挂件会**主动写 `root.style.left = '0'; root.style.top = '0'`**
@@ -1690,8 +1698,8 @@
       try {
         root.style.setProperty('left', 'auto', 'important')
         root.style.setProperty('top', 'auto', 'important')
-        root.style.setProperty('right', '0', 'important')
-        root.style.setProperty('bottom', '0', 'important')
+        root.style.setProperty('right', Math.round(dx) + 'px', 'important')
+        root.style.setProperty('bottom', Math.round(dy) + 'px', 'important')
       } catch (e) {}
     }
 
