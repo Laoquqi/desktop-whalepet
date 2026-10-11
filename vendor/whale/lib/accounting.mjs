@@ -29,6 +29,41 @@ export function dayOffset(day, offset) {
   return beijingDay(Date.parse(day + 'T00:00:00+08:00') + offset * 86400000)
 }
 
+// v789（issue #184）：partialDay 改为**按实际观测缺口就地计算**，不再是硬编码 true。
+//   为什么要有这个：记账只发生在「客户端界面开着 + 余额能取到」的时候，任一条不成立就完全不观测；
+//   跨零点的那一段（新建当日行时 openingUnits 直接取"此刻余额"）会被新当天的起点吞掉，
+//   于是「今日已用」长期显示一个明显偏小的数字，而界面上**没有任何"这是部分数据"的提示**。
+//   判据（issue 里给出的算法）：观测起点距当日 00:00、或（对已经过去的日子）最后一次观测距次日 00:00，
+//   超过 GAP_MS 就视为部分数据。正常运行时两个缺口都只有几分钟 ⇒ false，不会误伤正常日。
+const PARTIAL_GAP_MS = 10 * 60 * 1000
+function partialDayOf(day, row, now) {
+  try {
+    const start = Date.parse(String(day) + 'T00:00:00+08:00')
+    if (!Number.isFinite(start)) return true
+    const end = start + 86400000
+    const first = Number(row && row.firstAt)
+    const last = Number(row && row.lastAt)
+    if (!Number.isFinite(first) || !Number.isFinite(last)) return true
+    const beforeGap = first - start
+    const afterGap = Number(now) >= end ? (end - last) : 0
+    return beforeGap > PARTIAL_GAP_MS || afterGap > PARTIAL_GAP_MS
+  } catch (err) { return true }
+}
+export function partialDayInfo(day, row, now = Date.now()) {
+  const start = Date.parse(String(day) + 'T00:00:00+08:00')
+  const partialDay = partialDayOf(day, row, now)
+  const first = Number(row && row.firstAt)
+  const last = Number(row && row.lastAt)
+  return {
+    partialDay,
+    // 给界面用：从几点才开始有观测（缺口在起点）/ 那天几点之后就没再观测（缺口在末尾）
+    observedFromMs: Number.isFinite(first) ? first : null,
+    observedToMs: Number.isFinite(last) ? last : null,
+    leadingGapMs: Number.isFinite(first) && Number.isFinite(start) ? Math.max(0, first - start) : null,
+    trailingGapMs: Number.isFinite(last) && Number.isFinite(start) && now >= start + 86400000 ? Math.max(0, start + 86400000 - last) : 0,
+  }
+}
+
 function currentBook(ledger) {
   const a = ledger.accounting
   return a && a.version === ACCOUNTING_VERSION && a.books && a.books[a.active]
@@ -98,7 +133,8 @@ export function balanceSummary(ledger, day = beijingDay()) {
     firstObservedAt: row.firstAt, lastObservedAt: row.lastAt,
     openingBalance: row.openingUnits / SCALE, currentBalance: row.lastUnits / SCALE,
     observedDecrease: row.debitUnits / SCALE, observedIncrease: row.creditUnits / SCALE,
-    needsReview, partialDay: true, revision: revisionOf(ledger, row),
+    needsReview, revision: revisionOf(ledger, row),
+    ...partialDayInfo(day, row),
     credits: correction ? correction.creditsUnits / SCALE : null,
     otherDebits: correction ? correction.otherDebitsUnits / SCALE : null,
     correctedAt: correction ? correction.at : null,
@@ -237,7 +273,8 @@ export function daySummary(ledger, day) {
       day, amount: fromOther.amount, currency: fromOther.currency,
       source: 'balance-observed-other-account', label: '已观测消费 · 历史账户',
       firstObservedAt: fromOther.firstObservedAt, lastObservedAt: fromOther.lastObservedAt,
-      needsReview: fromOther.needsReview, partialDay: true, ...common,
+      needsReview: fromOther.needsReview, ...common,
+      ...partialDayInfo(day, { firstAt: fromOther.firstObservedAt, lastAt: fromOther.lastObservedAt }),
     }
   }
   // An explicit historical total (even zero) wins over a conflicting estimate.

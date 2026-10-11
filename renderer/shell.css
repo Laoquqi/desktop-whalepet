@@ -79,3 +79,10 @@ html, body {
 .dshwv-snapmask, .dshwv-bubmask, .dshwv-resmask, .dshwv-usage-mask {
   background: transparent !important;
 }
+
+/* ===========================================================================
+   上游 0.4.1 的「菜单底部版本小字」（.dshwv-ver，点击进关于/自检面板）：
+   用户要求不带"显示版本"功能 → 整体隐藏（面板因此不可达，检查更新的
+   联网路由也随之休眠；vendor 代码零改动）。
+   =========================================================================== */
+.dshwv-ver { display: none !important; }
