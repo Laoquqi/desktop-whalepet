@@ -235,6 +235,8 @@ const CLIENT_FILE = path.join(PLUGIN_ROOT, 'lib', 'client.js')
 // ⚠️ 彩蛋那两个图标**故意用中性文件名**（egg-1 / egg-2）：
 //    原来叫 500kg.png / 380mm.png —— 而那就是两件武器的口径，
 //    等于把"别问是什么"的答案写在了文件名里。
+// 【桌宠移植补丁 2/2】原版目录名是 art/ —— 桌宠里统一成 assets/，
+// 与随包发布的那一版保持一致（内容相同，只是目录改名）。
 const ART_DIR = path.join(PLUGIN_ROOT, 'assets')
 
 // 歌单目录 <插件根>/songs/。
