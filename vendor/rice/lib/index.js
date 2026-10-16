@@ -245,6 +245,11 @@ const ART_DIR = path.join(PLUGIN_ROOT, 'assets')
 // 用户要做的只有一件事：**把歌丢进去**。
 //   不用改文件名（文件名就是歌名）、不用填路径、不用重启（每次请求都重新扫目录）。
 // 一首就唱那首，多首就随机一首。
+// 【桌宠移植补丁 3/3】
+//   · 用「exe 所在目录」来算 → **文件夹改成什么名字都对**（不写死路径）。
+//   · 为什么不用原来的 `<插件根>/songs`：打包进 asar 之后那是**只读虚拟路径** ——
+//     用户没法往里丢歌，资源管理器也打不开它（面板上「选择音乐…」点了没反应就是这个原因）。
+//   · 随包那份由 electron-builder 的 `extraFiles` 放到 exe 旁边（不进 asar）。
 const APP_DIR = process.env.DSH_PET_DIR || path.dirname(process.execPath)
 const SONGS_DIR = path.join(APP_DIR, 'vendor', 'rice', 'songs')
 // 余额警报音**另起一个目录**（见 DEFAULT_CONFIG 里的 alarmSong）：
