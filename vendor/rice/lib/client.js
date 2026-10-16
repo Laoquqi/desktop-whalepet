@@ -204,6 +204,10 @@
     '.dshrice-menu button.dshrice-on{background:#203170;border-color:#203170;color:#fff}',
     '.dshrice-menu button.dshrice-save{background:#2f6b46;border-color:#3f8a5c;color:#fff}',
     '.dshrice-menu button.dshrice-try{background:#8a5a1f;border-color:#a9702a;color:#fff}',
+    // 下拉行（目前只有"余额警报音"）：跟着按钮那套配色走，别让裸的 <select> 显得像外来控件。
+    // max-width + ellipsis：警报音的文件名可能很长，不能把面板撑宽。
+    '.dshrice-menu select.dshrice-sel{border:1px solid rgba(32,49,112,.28);background:#eef2fb;color:#203170;border-radius:6px;padding:3px 6px;font-size:12px;font-family:inherit;max-width:150px}',
+    '.dshrice-menu select.dshrice-sel:hover{background:#dfe7f8}',
     // 正在调米粒的位置/角度时才让它常显 —— 否则调的时候看不见它，等于瞎调。
     // 和显隐动画不冲突：两边都是"让它可见"，谁赢都一样。
     // ⚠️ 它**不是"面板开着就常显"** —— 那等于每次开面板、甚至她唱歌的时候，
@@ -539,6 +543,12 @@
         // 0 分钟 = 每个回合都唱。
         { type: 'range', key: 'autoSingMin', label: '最少隔', min: 0, max: 60, step: 1, store: 'autosing', showIf: 'autoSing', unit: '分钟' },
         { type: 'note', text: '歌放在 songs/ 文件夹里' },
+        // —— 余额警报音 ——
+        // 判据不是我定的数：读鲸鱼自己的「余额预警」，两边都开才响（见 maybeAlarm）。
+        { type: 'check', key: 'alarmOn', label: '余额不足时放一首', tip: '余额 ≤ 鲸鱼那条「余额预警」的线时放一首。两边都要开：鲸鱼那条预警 + 这一项。每打开一次页面最多放一次' },
+        { type: 'select', key: 'alarmSong', label: '放哪首', store: 'alarm', showIf: 'alarmOn', empty: '（不放）', preview: '试听',
+          tip: '从 alarm/ 文件夹里选一首。它和「唱歌」用的 songs/ 是两套，不会混在一起' },
+        { type: 'note', text: '警报音放在 alarm/ 文件夹里（和 songs/ 分开）' },
       ],
     },
   ]
@@ -588,12 +598,20 @@
   var draftAutoSingMin = 5
   var snapshotAutoSing = true
   var snapshotAutoSingMin = 5
+  // 余额警报那两项（开关 + 放哪一首）。同一个理由：不按角色存，草稿制。
+  // ⚠️ **开关只管我们这一半** —— 真正响还要鲸鱼那条「余额预警」开着（见 maybeAlarm）。
+  var draftAlarmOn = true
+  var draftAlarmSong = ''
+  var snapshotAlarmOn = true
+  var snapshotAlarmSong = ''
 
   // 生成器查到的元素都收在这里。renderPanel 只认 refs ——
   // 于是"面板长什么样"和"面板怎么变"是两件事，加一行不用改 renderPanel。
   var refs = {
     checks: {}, notes: {}, nums: {},
     targets: [], steps: [], assets: [], ranges: [], only: [],
+    // 下拉选择行（目前只有"余额警报音"一行）：{row, sel}
+    selects: [],
     // showIf：某一行"只在某个开关打开时才显示"（比如概率滑杆之于随机偷吃）。
     // 和 only 是两回事：only 跟着"当前在调米粒还是碗"走，showIf 跟着某个勾选框走。
     showIf: [],
@@ -733,6 +751,32 @@
       n.appendChild(el('span', 'dshrice-mut dshrice-q', r.text))
       return n
     }
+    if (r.type === 'select') {
+      // 从"服务器给的名单里挑一个"（目前只有余额警报音）。
+      // 之所以要下拉框而不是文件选择框：音频文件走 data URI 会把配置撑到几 MB，
+      // 而配置**每轮轮询都会整个传一遍** —— 那是致命开销。所以音频一律"放目录里、选名字"。
+      n = rowEl()
+      n.appendChild(document.createTextNode(r.label + ' '))
+      var sel = el('select', 'dshrice-sel')
+      sel.setAttribute('data-select', r.key)
+      if (r.tip) sel.title = r.tip
+      var entry = { row: r, sel: sel }
+      refs.selects.push(entry)
+      n.appendChild(sel)
+      // 试听：不试听就没法知道"这首到底是哪个文件"，而警报要等到余额低才响。
+      // ⚠️ 它是个**开关**（试听 ↔ 停止），不是一个只往前走的按钮 ——
+      //    用户点它放出来的东西，必须能用同一个按钮停掉。按钮上写什么就得是什么。
+      if (r.preview) {
+        var pb = btn(null, r.preview)
+        pb.title = '放出来听听是哪首（再点一下停）· 不会保存'
+        pb.setAttribute('data-alarmpreview', r.key)
+        entry.previewBtn = pb
+        entry.previewLabel = r.preview
+        n.appendChild(pb)
+      }
+      if (r.showIf) refs.showIf.push({ el: n, key: r.showIf })
+      return n
+    }
     return rowEl()
   }
 
@@ -838,6 +882,15 @@
     // 音量刻度 0~10（默认 5）—— **和用户看到的是同一个数**。
     // 它是数字，所以 CFG_KEYS 那套通用拷贝就能把它带过来。
     riceSoundVol: 5,
+    // —— 余额警报音 ——
+    // 判据不是我定的数：读鲸鱼自己的「余额预警」（usage-settings.json 的 alert.on/below），
+    // 于是"余额不足"只有一个真身，用户改线只改鲸鱼那一个数字。
+    // **两边都开才响**：alarmOn && 鲸鱼的 alert.on。
+    alarmOn: true,
+    // 放 alarm/ 目录里的哪一首。**和 songs/ 是两套**。
+    // 默认那一首是随包发的（群主的通用音效）—— 开箱就有声音；自己的文件不随包发。
+    // 它和 dropSound 一样是字符串，所以和图片一样单独接（不在 CFG_KEYS 那串数字键里）。
+    alarmSong: '冰冰冰.mp3',
     chewOriginX: 50, chewOriginY: 86,
     // —— 「扣在头顶」的落点 ——
     // 坐标和 bowlLeft/bowlTop 同一套（x = 碗的中心、y = 碗的上边，都相对 .dshwv-body）。
@@ -948,6 +1001,7 @@
 
   function applyCfg(next) {
     if (!next || typeof next !== 'object') return
+    cfgSeen = true      // 配置到过 —— 余额警报的判定要等这个（见 maybeAlarm 的调用处）
     for (var i = 0; i < CFG_KEYS.length; i++) {
       var v = next[CFG_KEYS[i]]
       if (typeof v === 'number' && isFinite(v)) cfg[CFG_KEYS[i]] = v
@@ -963,9 +1017,14 @@
     if (typeof next.riceSoundOn === 'boolean') cfg.riceSoundOn = next.riceSoundOn
     if (typeof next.randomSteal === 'boolean') cfg.randomSteal = next.randomSteal
     if (typeof next.autoSingOn === 'boolean') cfg.autoSingOn = next.autoSingOn
+    // 余额警报：一个布尔、一个字符串 —— 都不在那串数字键里，各接各的。
+    // 漏掉这行的后果和 grainImage 那次一样："配置文件里改了没用"。
+    if (typeof next.alarmOn === 'boolean') cfg.alarmOn = next.alarmOn
     // 音效路径/数据也是字符串
     if (typeof next.riceSound === 'string') cfg.riceSound = next.riceSound
     if (typeof next.dropSound === 'string') cfg.dropSound = next.dropSound
+    // 余额警报音：也是字符串（一个 alarm/ 里的文件名）
+    if (typeof next.alarmSong === 'string') cfg.alarmSong = next.alarmSong
     // perRole 是"每个角色一份覆盖值"的对象，整块接过来
     if (next.perRole && typeof next.perRole === 'object') cfg.perRole = next.perRole
 
@@ -1262,11 +1321,69 @@
     cfg[r.key] = v
   }
 
+  // —— 下拉行（"从服务器给的名单里挑一个"）——
+  // 名单是 songs.json 里 alarm 那一份（见 loadSongs）。
+  // ⚠️ 音频**不能**像图片那样存成 data URI：配置每轮轮询都会整个传一遍，
+  //    几 MB 的歌塞进去就是每 3 秒搬一次。所以音频一律"放目录里、只存文件名"。
+  function selectValue(r) {
+    if (r.store === 'alarm') return draftAlarmSong
+    return String(cfg[r.key] || '')
+  }
+  function selectSet(r, v) {
+    if (r.store === 'alarm') { draftAlarmSong = v; return }
+    cfg[r.key] = v
+  }
+  function selectOptions(r) {
+    if (r.store === 'alarm') return alarmList
+    return []
+  }
+  function fillSelect(entry) {
+    var r = entry.row
+    var list = selectOptions(r)
+    // 选项只在"名单变了"的时候重建 —— 每次 renderPanel 都重建会把用户正在拉的下拉关掉。
+    var sig = list.map(function (o) { return o.file }).join('\u0000')
+    if (entry.sig !== sig) {
+      entry.sig = sig
+      entry.sel.textContent = ''
+      var none = el('option', null, r.empty || '（无）')
+      none.value = ''
+      entry.sel.appendChild(none)
+      for (var i = 0; i < list.length; i++) {
+        var o = el('option', null, list[i].name)
+        o.value = list[i].file
+        entry.sel.appendChild(o)
+      }
+    }
+    var v = selectValue(r)
+    // 选了一个已经不在名单里的文件（删了/改名了）—— 明说"不在目录里"，
+    // 而不是悄悄跳回第一项（那会让人以为保存错了）。
+    var has = (v === '')
+    for (var j = 0; j < list.length; j++) { if (list[j].file === v) has = true }
+    var ghost = entry.sel.querySelector('option[data-ghost]')
+    if (!has) {
+      if (!ghost) {
+        ghost = el('option', null, '')
+        ghost.setAttribute('data-ghost', '1')
+        entry.sel.appendChild(ghost)
+      }
+      ghost.value = v
+      ghost.textContent = v + '（不在目录里）'
+    } else if (ghost) {
+      entry.sel.removeChild(ghost)
+    }
+    entry.sel.value = v
+  }
+
   function renderPanel() {
     refs.checks.riceOn.checked = riceOn
     refs.checks.soundOn.checked = draftSoundOn
     if (refs.checks.randomSteal) refs.checks.randomSteal.checked = draftRandomSteal
     if (refs.checks.autoSing) refs.checks.autoSing.checked = draftAutoSing
+    // ⚠️ **每个勾选框都必须在这里被画一遍** —— 漏一个的后果就是"界面在骗人"：
+    //    `<input type=checkbox>` 的默认 DOM 状态是未勾选，于是刷新之后它显示成"关着"，
+    //    而配置里其实是开着的（用户会以为功能坏了、或者以为刚才那次播放把它关掉了）。
+    //    这条真漏过一次（alarmOn）—— 所以 panel-shape 探针现在会逐个核对，见那条断言。
+    if (refs.checks.alarmOn) refs.checks.alarmOn.checked = draftAlarmOn
     if (refs.notes.role) refs.notes.role.textContent = roleNow === 'default' ? '默认角色' : '角色专属'
     // showIf：这一行只在某个勾选框打开时才显示。
     // （比如"概率"之于"随机偷吃" —— 关掉随机之后那个滑杆是纯噪声。）
@@ -1290,6 +1407,18 @@
     }
     for (var a = 0; a < refs.assets.length; a++) {
       refs.assets[a].name.textContent = assetName(refs.assets[a].row)
+    }
+    for (var q = 0; q < refs.selects.length; q++) {
+      fillSelect(refs.selects[q])
+      // 试听那个按钮跟着"警报在不在放"翻字：正在放 → 「停止」。
+      // 一个按钮管两件事，但**同一时刻只写它会做的那一件**。
+      var sb = refs.selects[q].previewBtn
+      if (sb) {
+        var want = alarmPlaying ? '停止' : refs.selects[q].previewLabel
+        if (sb.textContent !== want) sb.textContent = want
+        sb.classList.toggle('dshrice-on', !!alarmPlaying)
+        sb.title = alarmPlaying ? '停下这首（试听和余额警报都是它）' : '放出来听听是哪首（再点一下停）· 不会保存'
+      }
     }
     for (var g = 0; g < refs.ranges.length; g++) {
       var rr = refs.ranges[g]
@@ -1355,6 +1484,14 @@
     draftAutoSingMin = (typeof cfg.autoSingMin === 'number') ? cfg.autoSingMin : 5
     snapshotAutoSing = draftAutoSing
     snapshotAutoSingMin = draftAutoSingMin
+    // 余额警报同理：开关 + 放哪一首
+    draftAlarmOn = cfg.alarmOn !== false
+    draftAlarmSong = (typeof cfg.alarmSong === 'string') ? cfg.alarmSong : ''
+    snapshotAlarmOn = draftAlarmOn
+    snapshotAlarmSong = draftAlarmSong
+    // 顺手把两份名单取回来（她唱的歌 + 警报音）—— 这样"往 alarm/ 里丢一首、
+    // 打开面板就能选"，不用刷新页面、也不用重启。
+    loadSongs(function () { if (menuOpen) renderPanel() })
     setHint('')
     menuEl.classList.add('dshrice-open')
     renderPanel()
@@ -1366,6 +1503,9 @@
   function closeMenu() {
     menuOpen = false
     menuEl.classList.remove('dshrice-open')
+    // 试听是你为了"听一下"才放的：关面板 = 你看完了，就把那首停掉。
+    // ⚠️ **真的余额提醒不停** —— 那个是提醒，关面板去看余额是自然的下一步。
+    if (alarmPlaying && alarmPreview) stopAlarm()
     // menuOpen 已经是 false 了，所以这一句会把"停给你看的碗/常显的米粒"一起收回去。
     syncTuneHold()
     EGGS.forEach(function (egg) {
@@ -1556,6 +1696,21 @@
     draftAutoSing = refs.checks.autoSing.checked
     renderPanel()
   })
+  // 余额警报的开关同样是草稿。它只关我们这一半 ——
+  // 真正响还要鲸鱼那条「余额预警」开着（见 maybeAlarm）。
+  if (refs.checks.alarmOn) refs.checks.alarmOn.addEventListener('change', function () {
+    draftAlarmOn = refs.checks.alarmOn.checked
+    renderPanel()
+  })
+  // 下拉行（警报音）：换了只改草稿，**点保存才写回** —— 和素材行同一个规矩。
+  for (var si = 0; si < refs.selects.length; si++) {
+    (function (entry) {
+      entry.sel.addEventListener('change', function () {
+        selectSet(entry.row, entry.sel.value)
+        setHint('记得点「保存」', 2500)
+      })
+    })(refs.selects[si])
+  }
 
   // 滑杆：拖的时候只更新读数，**松手才试听一声** ——
   // 不然 input 事件会在拖动过程中连响几十次。
@@ -1599,6 +1754,9 @@
     }
     // 唱歌：点一下开始，再点一下停
     if (b.classList.contains('dshrice-sing')) { toggleSing(); return }
+    // 警报音试听：**不动配置**，只是把当前选中的那首放出来听一句
+    var apk = b.getAttribute('data-alarmpreview')
+    if (apk) { previewAlarm(); return }
     // 换素材：选一个文件 / 换回默认
     var ak = b.getAttribute('data-asset')
     if (ak) {
@@ -1651,6 +1809,8 @@
       draftChancePct = snapshotChancePct
       draftAutoSing = snapshotAutoSing
       draftAutoSingMin = snapshotAutoSingMin
+      draftAlarmOn = snapshotAlarmOn
+      draftAlarmSong = snapshotAlarmSong
       renderLayout(); renderGrainArt(); renderPanel()
       setHint('已回到打开时的值', 3000)
       return
@@ -1671,6 +1831,9 @@
       // 开工自动唱那两项同理
       patch.autoSingOn = draftAutoSing
       patch.autoSingMin = draftAutoSingMin
+      // 余额警报那两项也带上（同样不按角色存）
+      patch.alarmOn = draftAlarmOn
+      patch.alarmSong = draftAlarmSong
       setHint('保存中…')
       try {
         fetch('/dsh-rice/config', {
@@ -1740,6 +1903,9 @@
   // 刻意**不做进度条**：那会让一个"逗她玩"的按钮变成一个播放器，
   // 而这里真正需要的只有两件事 —— 开始、停。
   var songList = null        // null = 还没取过；数组 = 取回来的歌单
+  // 余额警报音那份名单（alarm/ 目录）。**和歌单分开存** ——
+  // 「唱歌」永远只认 songs，警报只认这一份，两套列表不可能互相混进去。
+  var alarmList = []
   var songAudio = null
   var songAudioUrl = ''      // 记着元素里装的是哪首 —— 同一首就不重设 src
   var singing = false
@@ -1806,8 +1972,14 @@
     var once = function () { if (done) return; done = true; cb() }
     fetch('/dsh-rice/songs.json', { cache: 'no-store' })
       .then(function (r) { return r.json() })
-      .then(function (d) { songList = (d && d.songs) || []; once() })
-      .catch(function () { songList = []; once() })
+      .then(function (d) {
+        songList = (d && d.songs) || []
+        // 顺手把警报音那份名单也拿回来（同一条路由、一次请求）——
+        // 于是"往 alarm/ 里丢一首，打开面板就能选"，不用刷新也不用重启。
+        alarmList = (d && d.alarm) || []
+        once()
+      })
+      .catch(function () { songList = []; alarmList = []; once() })
   }
   function pickSong() {
     if (!songList || !songList.length) return null
@@ -1825,6 +1997,12 @@
   // 手动点的时候必须说话：点了没反应又不给理由，用户只会以为按钮坏了。
   function startSing(viaAuto) {
     var auto = !!viaAuto
+    // 警报还在放 → 别开新歌（警报优先度最高）。手动的要说一句，自动的安静收场。
+    // 提示里**指出去哪儿停** —— 只说"还在放"等于让人干瞪眼。
+    if (alarmPlaying) {
+      if (!auto) setHint('余额警报还在放（面板里点「停止」）', 5000)
+      return
+    }
     // **每次都重新取歌单** —— 于是"往 songs/ 里丢一首，直接点就能唱"，
     // 不用刷新页面。请求很小（就是一串文件名），本地往返可以忽略。
     var go = function () {
@@ -1900,6 +2078,175 @@
     if (!singing) { startSing(false); return }
     if (songAuto) { keepSing(); return }
     stopSing()
+  }
+
+  // —— 余额不足时放一首（"雨爱"那种）——
+  // 判据**不是我定的数，也不新增一个数**：读鲸鱼自己的「余额预警」
+  // （`/dsh-whale/usage-settings.json` 里的 `alert.on` / `alert.below`）。
+  // 于是"余额不足"只有一个真身 —— 用户要改线，就在鲸鱼面板里改那一个数字，
+  // 我们下次打开页面就跟着变。**两边都开才响**（它的 alert.on + 我们的 alarmOn）。
+  //
+  // 时机：**每打开一次页面只判一次、最多放一次**（sessionStorage 记着）。
+  //   · 同一个标签页刷新**不重复放**（调试时不用听十遍）；
+  //   · 新开标签页 / 重开桌面客户端才算"打开 DSH"。
+  //   所以它不是实时警报：页面里把余额花到线下**不会**响，下次打开才响。
+  //
+  // 优先级：**高于「唱歌」**（包括已经"留住"的那首）—— 警报是警报，歌是歌。
+  // 音量：仍然只用鲸鱼那个 vol（音量只有一处真身）；但它有自己的开关，
+  //   不挂在「音效开关」上 —— 有人关了吃饭声，却正是想要这个提醒。
+  // ⚠️ 键名带 `-fired`：它存的是"**这一局放过了**"。
+  //   早先那版存的是"判过了"（含义不同）—— 所以**改名**，让旧构建留下的标记自然失效，
+  //   否则升级之后那个标签页会带着一个陈旧的"已判"标记、这一局再也不会响。
+  var ALARM_ONCE_KEY = 'dshrice-alarm-fired'
+  var alarmAudio = null
+  var alarmUrlNow = ''
+  var alarmPlaying = false
+  // 这一次是"你点出来的试听"还是"真的余额提醒"。
+  // 唯一的区别：**关面板时试听会停，真提醒不会** ——
+  // 提醒响了、你关掉面板去看余额，是件很自然的事，不该顺手把它掐了。
+  var alarmPreview = false
+  var alarmGestureArmed = false
+  // 这一局**已经放过了** —— 于是不再判、不再读（sessionStorage 让它跨刷新也成立）。
+  // ⚠️ 注意它是"放过"而不是"判过"：判过但没到线的话，下一次余额下降还要再判
+  //   （用户最早那条 A4：「只在余额下降时才读取」—— 见下面 poll 里那段注释）。
+  var alarmFired = false
+  // 上一次看到的余额。**只在它下降时才再判一次** —— 这就是"读得极少"的那条规矩。
+  var alarmSeenBal = null
+  // 配置有没有到过。**判定必须等它** —— 否则"配置还没读到"会被当成"没设警报音"，
+  // 于是这一局白白错过（而且 sessionStorage 已经置位，刷新也补不回来）。
+  var cfgSeen = false
+  // sessionStorage 在隐私模式/沙箱里可能直接抛异常 —— 抛了就当成"没放过"
+  // （宁可多放一次，也不能让整个页面脚本起不来）。
+  try { alarmFired = sessionStorage.getItem(ALARM_ONCE_KEY) === '1' } catch (err) {}
+  function alarmSongNow() {
+    return (typeof cfg.alarmSong === 'string') ? cfg.alarmSong : ''
+  }
+  // 我们这一半的条件（开关 + 有歌）。**鲸鱼那一半要读了才知道** —— 见 maybeAlarm。
+  function alarmWanted() {
+    return cfg.alarmOn !== false && !!alarmSongNow()
+  }
+  function alarmUrl(file) {
+    return '/dsh-rice/song?f=' + encodeURIComponent(file) + '&kind=alarm'
+  }
+  function applyAlarmVolume() {
+    // 和唱歌共用同一个音量来源（鲸鱼的 vol）—— 不另开一套。
+    if (!alarmAudio) return
+    try { alarmAudio.volume = Math.max(0, Math.min(1, songBaseVolume())) } catch (err) {}
+  }
+  function alarmEl() {
+    if (alarmAudio) return alarmAudio
+    try {
+      alarmAudio = new Audio()
+      alarmAudio.preload = 'auto'
+      // 放完/出错都要**把状态收回来并重画按钮** ——
+      // 否则那个按钮会一直写着「停止」，而它已经没声了（按钮在骗人）。
+      alarmAudio.addEventListener('ended', function () { alarmDone() })
+      // 文件被删了/格式不对 —— **必须说出来**。警报静默失败是最糟的一种失败。
+      alarmAudio.addEventListener('error', function () {
+        alarmPlaying = false
+        alarmPreview = false
+        if (menuOpen) renderPanel()
+        setHint('警报音放不出来（alarm/ 里还有这个文件吗？）', 8000)
+      })
+    } catch (err) { alarmAudio = null }
+    return alarmAudio
+  }
+  function alarmDone() {
+    alarmPlaying = false
+    alarmPreview = false
+    if (menuOpen) renderPanel()
+  }
+  // 停下来。**试听和"余额警报"用的是同一个停止动作** ——
+  // 放出来的东西必须能停，而最该停它的地方就是放出它的那个按钮（见 previewAlarm）。
+  function stopAlarm() {
+    if (!alarmPlaying) return
+    alarmPlaying = false
+    alarmPreview = false
+    if (alarmAudio) { try { alarmAudio.pause() } catch (err) {} }
+    if (menuOpen) renderPanel()
+    setHint('已停', 2000)
+  }
+  // below = 触发它的那条线（试听时传 null，提示语就不提余额）
+  function fireAlarm(file, below, viaGesture) {
+    var ae = alarmEl()
+    if (!ae) return
+    // 警报压过唱歌 —— 「留住」那首也一样让位（这是"留住"唯一的例外，README 里写着）
+    if (singing) stopSing()
+    var url = alarmUrl(file)
+    if (alarmUrlNow !== url) { ae.src = url; alarmUrlNow = url }
+    applyAlarmVolume()
+    try { ae.currentTime = 0 } catch (err) {}
+    var p = null
+    try { p = ae.play() } catch (err) {}
+    alarmPlaying = true
+    // 记着这次是"你点出来的试听"还是"真的余额提醒" —— 两者的区别只有一个：
+    // **关面板时试听会停，真提醒不会**（提醒响了，你关面板去看余额是正常的）。
+    alarmPreview = (below === null)
+    // 按钮那一刻就该翻成「停止」（不等下一轮 renderPanel）
+    if (menuOpen) renderPanel()
+    // 说清楚"为什么会有这一首" —— 否则用户只会觉得莫名其妙
+    if (below === null) setHint('♪ ' + file.replace(/\.[^.]+$/, '') + '（再点一下停）', 4000)
+    else setHint('余额不足（≤ ¥' + below + '）：放一首给你听', 9000)
+    if (p && p.catch) p.catch(function () {
+      // 被浏览器拦住是**规则，不是坏了**（页面还没被点过时不许出声）。
+      // ⚠️ 但警报**不能像自动唱那样静默跳过**：它是个提醒。
+      // 所以先挂到"你第一次动手"上补一次，连那次都不行才明说。
+      alarmPlaying = false
+      alarmPreview = false
+      if (menuOpen) renderPanel()
+      setHint('')
+      if (viaGesture) setHint('余额不足，想放歌但浏览器不让出声（点一下页面再试）', 9000)
+      else armAlarmGesture(file, below)
+    })
+  }
+  function armAlarmGesture(file, below) {
+    if (alarmGestureArmed) return
+    alarmGestureArmed = true
+    var go = function () {
+      document.removeEventListener('pointerdown', go, true)
+      document.removeEventListener('keydown', go, true)
+      // 期间可能被关掉/换了歌 —— 补放之前再问一次"还要不要"
+      if (!alarmWanted()) return
+      fireAlarm(alarmSongNow(), below, true)
+    }
+    document.addEventListener('pointerdown', go, true)
+    document.addEventListener('keydown', go, true)
+  }
+  // 判一次：这个余额够不够"到线"。
+  // **打开时调一次，之后每次余额下降再调一次**（见 poll 里那段注释）。
+  // ⚠️ 置位（"这一局放过了"）只在**真的到线**的时候做 ——
+  //    判过但没到线，下一次下降还要再判，这正是用户最早那条 A4 的意思。
+  function maybeAlarm(total) {
+    if (alarmFired) return
+    if (!alarmWanted()) return
+    // 余额是本来就取的；这里多出来的只有这一次 usage-settings.json。
+    fetch('/dsh-whale/usage-settings.json', { cache: 'no-store' })
+      .then(function (r) { return r.json() })
+      .then(function (d) {
+        var al = d && d.settings && d.settings.alert
+        if (!al) return                                    // 鲸鱼那边没这条设置 → 当没这回事
+        if (al.on === false) return                        // 它关着 → 我们也不放（两边都开才响）
+        var below = (typeof al.below === 'number' && isFinite(al.below)) ? al.below : null
+        if (below === null) return
+        // 语义照抄它自己的界面文案：「余额 ≤ 设定值 时提醒」
+        if (!(total <= below)) return
+        alarmFired = true
+        try { sessionStorage.setItem(ALARM_ONCE_KEY, '1') } catch (err) {}
+        fireAlarm(alarmSongNow(), below, false)
+      })
+      .catch(function () {})   // 读不到 = 当这功能不存在（不弹错、更不放歌）
+  }
+  // 试听：**和判定无关**（不看余额、不看鲸鱼那条开关），只是让你知道选的是哪首。
+  // 它同时是**停止按钮** —— 正在放的时候点它 = 停（不然你放出来就没法收场，
+  // 尤其换成一整首歌当警报音的时候）。
+  function previewAlarm() {
+    if (alarmPlaying) { stopAlarm(); return }
+    var f = selectValue({ store: 'alarm' })
+    if (!f) { setHint('还没选警报音（把文件放进 alarm/ 就会出现在上面那份名单里）', 6000); return }
+    // 尊重鲸鱼自己的静音开关 —— 和唱歌同一个规矩
+    if (whaleSound && whaleSound.sound === false) { setHint('鲸鱼那边把音效关掉了', 6000); return }
+    if (whaleSound === null) withSoundSettings(function () {})
+    fireAlarm(f, null, true)
   }
 
   // —— 开工自动唱：宿主报时，页面自己放 ——
@@ -2397,6 +2744,22 @@
       // isPeak 只在本地用（决定碗里是哪一碗饭），**不往宿主上报** ——
       // 它是鲸鱼的判断，我们只是照它换张图。
       if (bal && typeof bal.isPeak === 'boolean') setPeak(bal.isPeak)
+      // —— 余额警报：打开时判一次，之后**每次余额下降**再判一次 ——
+      // 用的是**本来就要取的余额**（零额外请求），加上"每次判"一次 usage-settings.json。
+      // ⚠️ 这里就是用户最早那条 A4：「我们只在余额下降时才读取一次」。
+      //    我当初把它删掉了（理由："既然只在打开时放，局中再读就没意义"）—— **那个前提是错的**：
+      //    他真正要的场景（边干活边掉钱、甚至打断正在唱的歌）**只有"掉落时触发"才可能发生**。
+      //    实测：思考过程中余额掉到线下，什么也没发生 —— 因为开页那一刻还在线之上，
+      //    而当时的规则是"判过一次就再也不判"。
+      // **一局最多放一次**没变（alarmFired + sessionStorage）——
+      // "每掉一次钱念一遍"仍然是禁止的；变的只是"哪一刻去判"。
+      // ⚠️ cfgSeen：配置没到就判的话，"还没读到 alarmSong"会被当成"没设歌"；
+      //    等它到了再开始记 alarmSeenBal，免得把开页那一次判定白白丢掉。
+      if (cfgSeen && bal && typeof bal.totalBalance === 'number') {
+        if (alarmSeenBal === null) maybeAlarm(bal.totalBalance)                                  // 开页第一次
+        else if (bal.totalBalance < alarmSeenBal && !alarmFired) maybeAlarm(bal.totalBalance)    // 掉钱了
+        alarmSeenBal = bal.totalBalance
+      }
       // 上报当前角色 —— 宿主靠它决定"这次的版面改动该存给谁"。
       obs.roleId = activeRole()
       if (obs.seq === undefined && obs.todayUsage === undefined) return null

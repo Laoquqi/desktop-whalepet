@@ -18,10 +18,6 @@ import path from 'node:path'
 import { fileURLToPath } from 'node:url'
 
 const name = 'dsh-rice-widget'
-// 为什么注入 connection：所有 /dsh-rice/* 路由都要过一遍浏览器的信任栅栏，
-// 而那道栅栏是 connection 服务提供的。不声明它的话，我们的接口就是"任意网页都能读写"的
-// —— 详见下面 registerRoute 那段注释。
-const inject = ['webServer', 'connection']
 
 const JSON_HEADERS = {
   'Content-Type': 'application/json; charset=utf-8',
@@ -64,6 +60,21 @@ const DEFAULT_CONFIG = {
   // 两次自动唱歌之间**至少**隔多少分钟（0 = 不限制，每轮都唱）。
   // 「至少」是关键：不是"每 N 分钟唱一次"，而是"没隔够 N 分钟就不唱"。
   autoSingMin: 5,
+  // —— 余额不足时放一首歌（"雨爱"那种）——
+  // 判据**不是我定的数**：它读鲸鱼自己的「余额预警」（`usage-settings.json` 里的
+  // `alert.on` / `alert.below`），于是"余额不足"这件事只有一个真身 ——
+  // 用户要改线，就在鲸鱼面板里改那一个数字，我们下次打开就跟着变。
+  // **两边都开才响**：鲸鱼那条预警开着 **且** 这一项开着。
+  // 时机：**每打开一个 DSH 页面只判一次、最多放一次** —— 不是实时警报，
+  // 所以页面里把余额花到线下也不会响，下次打开才响（见 README「余额警报音」）。
+  alarmOn: true,
+  // 放哪一首：**alarm/ 目录里的文件名**（和 songs/ 是两套，互不混入）。
+  // 默认这一首是**随包发的**（群主给的通用音效，0.36 MB，短）—— 于是开箱就有声音，
+  // 不会出现"功能在、但没配置等于没有"。想换成自己的：把文件丢进 alarm/，
+  // 在面板「放哪首」里选（自己的文件**不随包发**）。
+  // ⚠️ 那首歌其实是 MP4 容器（`ftyp`），只是文件名写成 .mp3 —— 无所谓：
+  //    路由是按**文件头**嗅 Content-Type 的（见 artType），扩展名只说谎给白名单看。
+  alarmSong: '冰冰冰.mp3',
   // —— 版面：全部是相对鲸鱼容器 .dshwv-body 的百分比 ——
   // 这套东西画在**别人的立绘**上：分辨率、姿势、角色数都不由我们决定，
   // 所以位置不能写死。换了立绘，就按自己那张调这几个数。
@@ -224,9 +235,6 @@ const CLIENT_FILE = path.join(PLUGIN_ROOT, 'lib', 'client.js')
 // ⚠️ 彩蛋那两个图标**故意用中性文件名**（egg-1 / egg-2）：
 //    原来叫 500kg.png / 380mm.png —— 而那就是两件武器的口径，
 //    等于把"别问是什么"的答案写在了文件名里。
-// 素材目录 <插件根>/assets/。
-// 【桌宠移植补丁 2/2】原版目录名是 art/ —— 桌宠里统一成 assets/，
-// 与随包发布的那一版保持一致（内容相同，只是目录改名）。
 const ART_DIR = path.join(PLUGIN_ROOT, 'assets')
 
 // 歌单目录 <插件根>/songs/。
@@ -235,14 +243,12 @@ const ART_DIR = path.join(PLUGIN_ROOT, 'assets')
 // 用户要做的只有一件事：**把歌丢进去**。
 //   不用改文件名（文件名就是歌名）、不用填路径、不用重启（每次请求都重新扫目录）。
 // 一首就唱那首，多首就随机一首。
-// 歌单目录 = **桌宠文件夹**下的 `vendor/rice/songs`。
-// 【桌宠移植补丁 3/3】
-//   · 用"exe 所在目录"来算 → **文件夹改成什么名字都对**（不写死路径）。
-//   · 为什么不用原来的 `<插件根>/songs`：打包进 asar 之后那是**只读虚拟路径** ——
-//     用户没法往里丢歌，资源管理器也打不开它（面板上「选择音乐…」点了没反应就是这个原因）。
-//   · 随包那份由 electron-builder 的 `extraFiles` 放到 exe 旁边（不进 asar）。
 const APP_DIR = process.env.DSH_PET_DIR || path.dirname(process.execPath)
 const SONGS_DIR = path.join(APP_DIR, 'vendor', 'rice', 'songs')
+// 余额警报音**另起一个目录**（见 DEFAULT_CONFIG 里的 alarmSong）：
+// 于是"她唱的歌"和"余额警报"是两份列表，永远不可能互相混进去 ——
+// 往 alarm/ 里丢一首，它不会出现在「唱歌」的随机列表里；反之亦然。
+const ALARM_DIR = path.join(PLUGIN_ROOT, 'alarm')
 // 认得出是音频的扩展名。**只用来决定"这个文件要不要进歌单"** ——
 // Content-Type 仍然是按文件头嗅探的（见 artType），扩展名会说谎。
 const SONG_EXT = new Set([
@@ -319,6 +325,11 @@ function loadConfig() {
   if (!(out.autoSingMin >= 0)) out.autoSingMin = DEFAULT_CONFIG.autoSingMin
   if (out.autoSingMin > 60) out.autoSingMin = 60
   if (typeof out.autoSingOn !== 'boolean') out.autoSingOn = DEFAULT_CONFIG.autoSingOn
+  // 余额警报那两项：一个开关、一个文件名。
+  // 文件名要做类型兜底 —— 配置文件里被手改成数字/null 都不该让功能崩掉，
+  // 大不了就是"没设警报音"（什么都不放），和默认值一样。
+  if (typeof out.alarmOn !== 'boolean') out.alarmOn = DEFAULT_CONFIG.alarmOn
+  if (typeof out.alarmSong !== 'string') out.alarmSong = DEFAULT_CONFIG.alarmSong
   return out
 }
 
@@ -414,7 +425,53 @@ function readBody(req) {
   })
 }
 
-function apply(ctx) {
+// ⚠️ **这里有意没有对象级 `inject: ['webServer','connection']`。**
+// 对象级 inject 会把整个 apply() 推迟到那两个服务就绪之后 —— 而在**桌面端**，
+// 页面注入表是**宿主启动时收集一次**的，订阅一旦晚于那次收集，
+// 我们那条"把 rice.js 挂进页面"的行就**永远进不了表**：
+// 症状正是"宿主半区活着（路由都在）、客户端半区从未被请求"。
+// 所以 apply() 立刻执行、**第一件事就注册注入行**（它不依赖任何服务），
+// 其余逻辑放进 `root.inject([...], cb)` 局部等待 —— 语义不变，但注册不再被推迟。
+// （这套是照着 dsh-whale-widget 踩完 issue #152/#154 之后的写法抄的。）
+
+// —— 桌面端（Electron）的结构化注入行 ——
+// 桌面壳的 index.html 是**从安装包静态 dist 直读**的（`dsh-app://app/`），
+// 永远不经过宿主的 `renderIndex()` ⇒ **`tapIndex` 在桌面端不生效**（它只在浏览器形态有效）。
+// 桌面端唯一能生效的通道是 `webserver/index-inject` 推的行，经 IPC 交给页面侧逐行应用。
+// 两条硬约束（鲸鱼用两次线上故障换来的）：
+//   ① 用 **kind:'script'（内联行）**，不要 `script-src`：页面侧对 script-src 是
+//      "加载失败即 reject 整个 boot" —— 我们的路由一旦不可用，**整个应用起不来**。
+//      内联行由我们自己 createElement + 吞掉 onerror ⇒ 路由在就加载，不在就静默失败，
+//      宿主永远不会因为我们起不来。
+//   ② 行必须**尽早进表**（见上面那段：桌面端只收集一次）。
+const CLIENT_ROW_TEXT =
+  '(function(){try{var d=document.body||document.head||document.documentElement;if(!d)return;' +
+  'var s=document.createElement("script");s.src="/dsh-rice/rice.js";' +
+  's.onerror=function(){};d.appendChild(s)}catch(e){}})()'
+
+// apply：**同步注册注入行** → 再把主体交给服务等待。
+function apply(root) {
+  const rowDisposers = []
+  root.effect(() => () => { for (const d of rowDisposers) { try { d() } catch (err) {} } })
+  // ① 结构化注入行（桌面端唯一通道；浏览器形态另有下面的 tapIndex，两条并存、各自去重）
+  rowDisposers.push(root.on('webserver/index-inject', (table) => {
+    try {
+      if (!Array.isArray(table)) return
+      for (const row of table) {
+        if (!row) continue
+        // 已经有人推过同一件事（旧版本推过 script-src、或者我们自己推过）→ 不重复
+        if (row.kind === 'script-src' && row.src === '/dsh-rice/rice.js') return
+        if (row.kind === 'script' && typeof row.text === 'string'
+          && row.text.indexOf('/dsh-rice/rice.js') >= 0) return
+      }
+      table.push({ kind: 'script', placement: 'body', text: CLIENT_ROW_TEXT })
+    } catch (err) {}
+  }))
+  // ② 其余逻辑：等齐两个服务再跑
+  root.inject(['webServer', 'connection'], (ctx) => applyWithServices(ctx))
+}
+
+function applyWithServices(ctx) {
   const disposers = []
   const state = loadState()
   let cfg = loadConfig()
@@ -819,23 +876,25 @@ function apply(ctx) {
     }))
   }
 
-  // —— 唱歌 ——
-  // 目录不存在就建出来：**用户得先有个地方可以丢歌**。
-  // （npm 版的包里没有 songs/，所以这一步不是可选的。）
+  // —— 唱歌 · 余额警报音 ——
+  // 两个目录不存在就建出来：**用户得先有个地方可以丢歌**。
+  // （npm 版的包里没有 songs/ 也没有 alarm/，所以这一步不是可选的。）
   try { fs.mkdirSync(SONGS_DIR, { recursive: true }) } catch (err) {}
+  try { fs.mkdirSync(ALARM_DIR, { recursive: true }) } catch (err) {}
 
   // **每次都重新扫目录**，不在启动时做快照 ——
   // 于是"丢一首进去，刷新页面就能唱"，不用重启 dsh web。
   // 返回的是文件名数组（不是路径）—— 它是后面那条路由的白名单。
-  function listSongs() {
+  // 两个目录用同一段代码扫：认的扩展名、过滤规则、排序都一致（见 SONG_EXT）。
+  function listAudio(dir) {
     let names = []
-    try { names = fs.readdirSync(SONGS_DIR) } catch (err) { return [] }
+    try { names = fs.readdirSync(dir) } catch (err) { return [] }
     const out = []
     for (const n of names) {
       if (n.startsWith('.')) continue                       // 隐藏文件（含 macOS 的 ._ 副本）
       if (!SONG_EXT.has(path.extname(n).toLowerCase())) continue
       let st
-      try { st = fs.statSync(path.join(SONGS_DIR, n)) } catch (err) { continue }
+      try { st = fs.statSync(path.join(dir, n)) } catch (err) { continue }
       if (!st.isFile() || st.size === 0) continue
       out.push(n)
     }
@@ -868,46 +927,55 @@ function apply(ctx) {
     }
   }
 
-  // GET /dsh-rice/songs.json → { ok, songs:[{name,file,url}] }
+  // GET /dsh-rice/songs.json → { ok, songs:[{name,file,url}], alarm:[{name,file,url}] }
   // name 是**去掉扩展名的文件名** —— 面板上显示它，用户不需要给歌改名。
+  // **一次请求给两份列表**（她唱的歌 + 余额警报音），但它们永远是两份：
+  //   songs ← songs/    alarm ← alarm/    （url 上那个 kind=alarm 就是分界线）
   disposers.push(registerRoute({
     kind: 'exact',
     path: '/dsh-rice/songs.json',
     handler: (req, res) => {
       try {
-        const songs = listSongs().map((file) => ({
+        const entry = (file, kind) => ({
           name: file.replace(/\.[^.]+$/, ''),
           file,
-          url: '/dsh-rice/song?f=' + encodeURIComponent(file),
-        }))
+          url: '/dsh-rice/song?f=' + encodeURIComponent(file) + (kind ? '&kind=' + kind : ''),
+        })
+        const songs = listAudio(SONGS_DIR).map((f) => entry(f, ''))
+        const alarm = listAudio(ALARM_DIR).map((f) => entry(f, 'alarm'))
         res.writeHead(200, JSON_HEADERS)
-        res.end(JSON.stringify({ ok: true, songs }))
+        res.end(JSON.stringify({ ok: true, songs, alarm }))
       } catch (err) {
         res.writeHead(500, JSON_HEADERS)
-        res.end(JSON.stringify({ ok: false, songs: [] }))
+        res.end(JSON.stringify({ ok: false, songs: [], alarm: [] }))
       }
     },
   }))
 
-  // GET /dsh-rice/song?f=<文件名> → 音频字节
+  // GET /dsh-rice/song?f=<文件名>[&kind=alarm] → 音频字节
   //
-  // ⚠️ **必须走白名单，不能直接 path.join(SONGS_DIR, f)。**
+  // ⚠️ **必须走白名单，不能直接 path.join(dir, f)。**
   // 后者会让 `?f=../../../.credentials.yaml` 读走机器上的任意文件 ——
   // 而这台机器上跑着 DSH。所以：**只认"刚扫出来的那份名单里有的名字"**。
   // 比对的既然是文件名本身（而不是拼出来的路径），".."、绝对路径、
   // 以及各种编码花招就都进不来了。
+  // `kind=alarm` 时白名单换成 alarm/ 那份 —— 两个目录各有各的白名单，
+  // 所以"警报音"读不到 songs/ 外的任何东西，反之也一样。
   disposers.push(registerRoute({
     kind: 'exact',
     path: '/dsh-rice/song',
     handler: (req, res) => {
       try {
-        const want = new URL(req.url || '/', 'http://127.0.0.1').searchParams.get('f') || ''
-        if (!listSongs().includes(want)) {
+        const q = new URL(req.url || '/', 'http://127.0.0.1').searchParams
+        const isAlarm = q.get('kind') === 'alarm'
+        const dir = isAlarm ? ALARM_DIR : SONGS_DIR
+        const want = q.get('f') || ''
+        if (!listAudio(dir).includes(want)) {
           res.writeHead(404, { 'Content-Type': 'text/plain; charset=utf-8' })
-          res.end('song not found')
+          res.end(isAlarm ? 'alarm track not found' : 'song not found')
           return
         }
-        const full = path.join(SONGS_DIR, want)
+        const full = path.join(dir, want)
         const total = fs.statSync(full).size
         // 只读开头一小段来嗅类型 —— **别为了看一眼文件头就把整首歌读进来**。
         // 无损整轨动辄几十 MB，那样每来一个 Range 请求都要同步读一遍。
@@ -994,4 +1062,4 @@ function apply(ctx) {
   })
 }
 
-export { name, inject, apply }
+export { name, apply }
