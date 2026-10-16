@@ -19766,12 +19766,9 @@ function setSoundSet(v) {
   saveConfig()
 }
 var SQUISH = 'scaleY(0.88) scaleX(1.05)'
-// PR #234（DenseFLoe，issue #233）：macOS 触控板"轻点"的 down/up 可能落在同一帧，
-//   按压视觉（挤压）会一闪而过甚至看不见 ⇒ 让视觉状态**至少保留 120ms**。
-//   ⚠️ 按该 PR 的说明：**不延迟音效、也不延迟点击判定**，只影响 body 的 transform 复位时机。
-var PRESS_VISUAL_MIN_MS = 120
+// 极短轻点的 down/up 可能落在同一帧：补上压扁起点后立即回弹，不延迟松手复位。
+var PRESS_VISUAL_TAP_MS = 32
 var pressVisualStartedAt = 0
-var pressVisualTimer = null
 var pressAudio = null
 var releaseAudio = null
 var pressing = false
@@ -19888,7 +19885,6 @@ function playReleaseAt(delaySec) {
   } catch (err) {}
 }
 function pressDown() {
-  if (pressVisualTimer) { clearTimeout(pressVisualTimer); pressVisualTimer = null }
   pressVisualStartedAt = performance.now()
   body.style.transform = SQUISH
   pressing = true
@@ -19898,17 +19894,15 @@ function pressDown() {
   playPress()
 }
 function pressUp() {
-  // PR #234：视觉复位按"最短 120ms"排期（音效与点击不受影响）
-  if (pressVisualTimer) { clearTimeout(pressVisualTimer); pressVisualTimer = null }
-  var visualDelay = Math.max(0, PRESS_VISUAL_MIN_MS - (performance.now() - pressVisualStartedAt))
-  if (visualDelay > 0) {
-    pressVisualTimer = setTimeout(function () {
-      pressVisualTimer = null
-      if (!pressing) body.style.transform = 'scaleY(1) scaleX(1)'
-    }, visualDelay)
-  } else {
-    body.style.transform = 'scaleY(1) scaleX(1)'
+  if (performance.now() - pressVisualStartedAt < PRESS_VISUAL_TAP_MS) {
+    var previousTransition = body.style.transition
+    body.style.transition = 'none'
+    body.style.transform = SQUISH
+    // 提交压扁样式，让同帧松手也能从这里启动原有 CSS 回弹过渡。
+    void body.offsetWidth
+    body.style.transition = previousTransition
   }
+  body.style.transform = 'scaleY(1) scaleX(1)'
   pressing = false
   // v868：静音按压时松开音也不响（顺手把 releasePlayed 标记收干净，避免下次误触发）
   if (pressOn === false) {
