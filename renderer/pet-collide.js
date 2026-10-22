@@ -65,10 +65,21 @@
         //    不然会把弹弓形变/黄金回旋那两路覆盖掉（转了半圈突然弹回）。
         if (X) X.set('poke', X.scale(1.12, 0.86))
         else img.style.transform = 'scale(1.12,.86)'
+        // ⚠️⚠️ **必须是"双 rAF"**，不能只套一层。
+        //
+        //    浏览器里 rAF 回调是在**同一帧绘制之前**执行的 —— 如果 poke 是从
+        //    定时器（通透模式的循环）里调用的，定时器又恰好落在 rAF 阶段之前，
+        //    那么"写 1.12"和"写回 1.0"就会落在**同一帧**里被合并成一次样式更新，
+        //    中间那一下"压扁"根本没被画出来 —— 表现就是"动画像没动"。
+        //    （实测：同样的代码，一次采样到 6 个不同 transform 值，另一次只有 1 个。）
+        //    套两层 rAF 就必然跨过一个绘制帧，压扁一定可见；真人点击那条路径
+        //    行为不变（它本来就在事件回调里，下一帧才绘制）。
         requestAnimationFrame(function () {
-          img.style.transition = 'transform .28s cubic-bezier(.34,1.56,.64,1)'
-          if (X) X.set('poke', X.scale(1, 1))
-          else img.style.transform = 'scale(1,1)'
+          requestAnimationFrame(function () {
+            img.style.transition = 'transform .28s cubic-bezier(.34,1.56,.64,1)'
+            if (X) X.set('poke', X.scale(1, 1))
+            else img.style.transform = 'scale(1,1)'
+          })
         })
       } catch (e) {}
     }

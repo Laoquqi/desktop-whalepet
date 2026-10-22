@@ -179,10 +179,13 @@
       img.style.transition = 'none'
       if (X) X.set('poke', X.scale(1.12, 0.86))
       else img.style.transform = 'scale(1.12,.86)'
+      // 双 rAF：保证"压扁"那一帧真的被画出来（单层会被合并掉，看着像没动）
       requestAnimationFrame(function () {
-        img.style.transition = 'transform .28s cubic-bezier(.34,1.56,.64,1)'
-        if (X) X.set('poke', X.scale(1, 1))
-        else img.style.transform = 'scale(1,1)'
+        requestAnimationFrame(function () {
+          img.style.transition = 'transform .28s cubic-bezier(.34,1.56,.64,1)'
+          if (X) X.set('poke', X.scale(1, 1))
+          else img.style.transform = 'scale(1,1)'
+        })
       })
     } catch (e) {}
   }
