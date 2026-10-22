@@ -4748,13 +4748,30 @@ function apiConvertMoney(v, fromCur, toCur, rate) {
   if (f === 'USD' && t === 'CNY') return n * r
   return null
 }
+// 金额格式化：toFixed(2) 在 |n| >= 1e21 时会**退化成科学计数法**（1e+21），
+// 用户要求「过大数字显示真实数字」—— 这里用 Intl 展开成完整十进制（不要千分位），
+// 小数仍固定两位，正常金额（< 1e21）走的还是原来的 toFixed(2)，观感不变。
+function fmtFixed2(num) {
+  var n = Number(num)
+  if (!isFinite(n)) return '--'
+  if (Math.abs(n) < 1e21) return n.toFixed(2)
+  try {
+    return n.toLocaleString('en-US', {
+      useGrouping: false,
+      minimumFractionDigits: 2,
+      maximumFractionDigits: 2,
+    })
+  } catch (err) {
+    return String(n)
+  }
+}
 function apiFmtMoney(v, cur) {
   var n = Number(v)
   if (!isFinite(n)) return '--'
   var c = String(cur || '')
-  if (c === 'USD') return '$ ' + n.toFixed(2)
-  if (c === 'CNY') return '¥ ' + n.toFixed(2)
-  return n.toFixed(2) + (c ? ' ' + c : '')
+  if (c === 'USD') return '$ ' + fmtFixed2(n)
+  if (c === 'CNY') return '¥ ' + fmtFixed2(n)
+  return fmtFixed2(n) + (c ? ' ' + c : '')
 }
 // 「今日已用」的来源标注（未知就返回空串，调用方不显示括号）
 function apiUsageSourceLabel(src) {
@@ -19637,7 +19654,7 @@ function rightGap() {
 }
 function fmt(balance, currency) {
   var num = Number(balance)
-  var fixed = isFinite(num) ? num.toFixed(2) : '--'
+  var fixed = isFinite(num) ? fmtFixed2(num) : '--'
   return currency === 'CNY' ? '¥ ' + fixed : fixed + ' ' + currency
 }
 function animateAmount(from, to, currency, duration) {

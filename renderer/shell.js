@@ -503,6 +503,8 @@
     // 通透模式（菜单里「拖动物理」右边的开关）—— 要在 pet-collide 之后
     // （它复用 pet-collide 的 pokeSilent 做无声点击动画）
     await loadScript('/tongtou-mode.js')
+    // 菜单太高时自动限高 + 可滚动（否则顶部会被窗口裁掉）
+    await loadScript('/menu-fit.js')
 
     // ⚠️⚠️⚠️ **就绪等待：轮询到挂件真就绪就立刻启动，不再盲等 4 秒。**
     //
