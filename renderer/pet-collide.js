@@ -49,12 +49,10 @@
 
   // "点她"同款：一次 squash & stretch，配按压音
   //
-  // ⚠️ silent 参数是给「通透模式」用的（那个模式要**循环**播这个动画）。
-  //    silent 时必须跳过两件事：
-  //      ① 按压/松手音效 —— 否则每 0.7 秒"啵啵"两声，音乐就没法听了；
-  //      ② consumeClickFinished() —— 那是"点击后接一圈黄金回旋"的钩子，
-  //         循环调用会让那个模式变成每 0.7 秒转一圈，停不下来。
-  function poke(silent) {
+  // ⚠️ 注意：**通透模式的循环动画不要复用这里**。
+  //    那个模式要的是"压 0.25s → 弹 0.25s"的无缝循环、压到 3/4 高，
+  //    节奏和深度都和这个一次性 Q 弹不一样 —— 见 renderer/tongtou-mode.js。
+  function poke() {
     var img = whaleImg()
     if (img) {
       try {
@@ -83,7 +81,6 @@
         })
       } catch (e) {}
     }
-    if (silent) return          // 循环动画：不出声、不触发黄金回旋
     // 点击动画结束 → 通知黄金回旋接一圈（常规点击触发模式用）。
     // .28s 过渡 + 一点余量，和 transform 的过渡时长对齐。
     setTimeout(function () {
@@ -402,8 +399,6 @@
 
   window.__dshpetCollide = {
     start: start, poke: poke, report: report,    // 给自检用
-    // 只做动画、不出声、不触发黄金回旋 —— 给「通透模式」循环播
-    pokeSilent: function () { poke(true) },
     _overlapOf: overlapOf,
     _onPeers: onPeers,
     _onSetPos: onSetPos,

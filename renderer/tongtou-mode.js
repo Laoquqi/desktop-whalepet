@@ -13,10 +13,11 @@
 //    路由那头按目录里第一个音频文件找 → 换歌只要把 mp3 丢进
 //    vendor/whale/assets/music/ 就行，不用改代码。
 //
-// ② 动画复用 pet-collide 的 poke()，但必须传 silent：
-//    poke() 原本会 ①播按压/松手音 ②通知黄金回旋接一圈。
-//    循环调用的话 ①会变成每 0.7 秒"啵啵"两声盖住音乐，
-//    ②会让"点击后转一圈"模式变成停不下来的旋转。所以走 pokeSilent()。
+// ② 动画**不复用** pet-collide 的 poke()，自己按相位驱动：
+//    poke() 是"一次性 Q 弹"（瞬间压到 0.86、再 0.28s 弹回），
+//    而用户要的是「压 0.25s → 弹 0.25s」无缝循环、压到 3/4 高 ——
+//    节奏和深度都不同。自己写还能顺手避开 poke() 的两个副作用
+//    （按压音效、通知黄金回旋接一圈）。
 //
 // ③ **开关状态不持久化**：Chromium 的自动播放策略要求"用户手势"，
 //    如果启动时自动恢复成开，play() 会被拒绝 —— 界面显示"开"、
@@ -29,7 +30,6 @@
   var api = window.petApi || {}
 
   var MUSIC = '/pet-music.mp3'
-  var POKE_MS = 700            // 循环节奏：动画本身 280ms，留一点余量更像"蹦"
   var VOLUME = 0.9
 
   var on = false
@@ -167,41 +167,58 @@
   // --------------------------------------------------------------------------
   // 动画循环
   // --------------------------------------------------------------------------
-  function pokeOnce() {
-    var C = window.__dshpetCollide
-    if (C && C.pokeSilent) { C.pokeSilent(); return }
-    // 兜底（pet-collide 没加载时）：直接做同款 squash & stretch，不出声
+  // 用户要求（改过一次）：
+  //   「压扁 → 回弹 → 压扁 → 回弹」要**连贯**，中间不能有停顿；
+  //   压扁 0.25 秒、回弹 0.25 秒；压的时候要**压得更下去**，压到桌宠 3/4 的位置。
+  //
+  // 所以这里**不再复用 pet-collide 的 poke()** —— 那个是"一次性 Q 弹"
+  // （瞬间压到 0.86、再 0.28s 弹回），节奏和深度都不对。
+  // 改成自己按相位驱动：
+  //   · 每 250ms 切一次目标（压 / 弹），transition 时长也正好 250ms
+  //     → 上一段的过渡结束点就是下一段的起点，**中间没有任何停留**
+  //   · 压：scaleY 0.75（高度压到 3/4）、scaleX 1.15（横向鼓出来，体积守恒感）
+  //   · transform-origin 在**底部中心**，所以是"往下坐"而不是整体缩小
+  //   · 仍然走 sprite-xform 的 'poke' 那一路 —— 弹弓形变/黄金回旋不会被覆盖
+  var CYCLE_MS = 250          // 压 250ms + 弹 250ms = 一拍 0.5 秒
+  var SQUASH_X = 1.15
+  var SQUASH_Y = 0.75         // 压到 3/4 高
+  var squashed = false
+  var cycles = 0
+
+  function tick() {
     var img = document.querySelector('img.dshwv-img')
     if (!img) return
+    squashed = !squashed
+    cycles++
     try {
       var X = window.__dshpetSpriteXform
       img.style.transformOrigin = '50% 100%'
-      img.style.transition = 'none'
-      if (X) X.set('poke', X.scale(1.12, 0.86))
-      else img.style.transform = 'scale(1.12,.86)'
-      // 双 rAF：保证"压扁"那一帧真的被画出来（单层会被合并掉，看着像没动）
-      requestAnimationFrame(function () {
-        requestAnimationFrame(function () {
-          img.style.transition = 'transform .28s cubic-bezier(.34,1.56,.64,1)'
-          if (X) X.set('poke', X.scale(1, 1))
-          else img.style.transform = 'scale(1,1)'
-        })
-      })
+      // ⚠️ 两段必须用**同一条对称缓动**。
+      //    之前"压"用 ease-in-out、"弹"用带过冲的曲线，实测下来
+      //    下去要 234ms、上来只要 175ms —— 两半观感不均匀（用户要的是各 0.25s）。
+      //    用同一条近正弦曲线，下去和上来就一样长、接缝也没有速度突变。
+      img.style.transition = 'transform ' + CYCLE_MS + 'ms cubic-bezier(.4,0,.6,1)'
+      var t = squashed ? X.scale(SQUASH_X, SQUASH_Y) : X.scale(1, 1)
+      if (X) X.set('poke', t)
+      else img.style.transform = t
     } catch (e) {}
   }
 
   function startAnim() {
     stopAnim()
-    pokeOnce()
-    timer = setInterval(pokeOnce, POKE_MS)
+    squashed = false
+    tick()                                  // 立刻压下第一拍
+    timer = setInterval(tick, CYCLE_MS)     // 之后每 250ms 切一次，无缝
   }
 
   function stopAnim() {
     if (timer) { clearInterval(timer); timer = null }
-    // 正好停在"压扁"那一帧时手动复位，别让她一直是扁的
+    // 正好停在"压扁"那一拍时手动复位，别让她一直是扁的
     try {
       var X = window.__dshpetSpriteXform
       if (X) X.clear('poke')
+      var img = document.querySelector('img.dshwv-img')
+      if (img) img.style.transition = ''
     } catch (e) {}
   }
 
@@ -251,7 +268,7 @@
     isOn: function () { return on },
     set: setOn,
     _inject: injectRow,
-    _pokeOnce: pokeOnce,
+    _tick: tick,
     // 自检/诊断用：看音乐到底有没有在走（不暴露任何密钥类东西）
     _state: function () {
       return {
@@ -261,6 +278,12 @@
         loop: audio ? audio.loop : null,
         src: audio ? String(audio.src || '') : null,
         err: (audio && audio.error) ? audio.error.code : null,
+        // 动画：tick 次数（每 250ms 一次）+ 当前相位
+        cycles: cycles,
+        squashed: squashed,
+        cycleMs: CYCLE_MS,
+        squashX: SQUASH_X,
+        squashY: SQUASH_Y,
       }
     },
   }

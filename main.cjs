@@ -2677,7 +2677,6 @@ async function runSelfTest() {
             out.ttPhysRowExists = !!physRow
             out.ttRowInPhys = !!ttGroup
             out.ttApi = !!(window.__dshpetTongtou && typeof window.__dshpetTongtou.set === 'function')
-            out.ttPokeSilent = !!(window.__dshpetCollide && typeof window.__dshpetCollide.pokeSilent === 'function')
             if (physRow && ttGroup) {
               const rl = physRow.querySelector('span')
               const rg = ttGroup.getBoundingClientRect()
@@ -2697,27 +2696,27 @@ async function runSelfTest() {
                   addEventListener: function () {},
                 }
               }
-              // 动画用"数次数"来验，别只看 style.transform ——
-              // 隐藏窗口里 rAF 基本不跑，而且 transform 可能被别的模块写成同一个值。
-              const C0 = window.__dshpetCollide
-              const origPoke = C0.pokeSilent
-              let pokes = 0
-              C0.pokeSilent = function () { pokes++; return origPoke.apply(this, arguments) }
+              // 动画用"数相位切换次数"来验（每 250ms 一次 tick），
+              // 别只看 style.transform —— 隐藏窗口里 rAF 基本不跑，
+              // 而且 transform 可能被别的模块写成同一个值。
+              const cyc0 = (window.__dshpetTongtou._state() || {}).cycles || 0
               window.__dshpetTongtou.set(true)
-              await sleep(1600)                        // POKE_MS=700 → 至少该跑 2 次
+              await sleep(1600)                        // 250ms 一拍 → 至少该跑 5 次
               out.ttOn = window.__dshpetTongtou.isOn()
-              out.ttPokes = pokes
-              out.ttAnimRan = pokes >= 2
+              const st1 = window.__dshpetTongtou._state() || {}
+              out.ttPokes = (st1.cycles || 0) - cyc0
+              out.ttAnimRan = out.ttPokes >= 5
               out.ttMusicTried = played > 0
+              out.ttSquashY = st1.squashY
               window.__dshpetTongtou.set(false)
-              await sleep(900)                         // 等一个周期，确认真的不再跑了
-              out.ttPokesAfterOff = pokes
-              out.ttAnimStopped = (pokes === out.ttPokes)
+              await sleep(900)                         // 等几个拍子，确认真的不再跑了
+              const st2 = window.__dshpetTongtou._state() || {}
+              out.ttPokesAfterOff = (st2.cycles || 0) - cyc0
+              out.ttAnimStopped = (out.ttPokesAfterOff === out.ttPokes)
               out.ttOff = window.__dshpetTongtou.isOn() === false
               out.ttPaused = paused > 0
               const X0 = window.__dshpetSpriteXform
               out.ttPokeCleared = X0 ? (X0.get('poke') === '') : null
-              C0.pokeSilent = origPoke
               window.Audio = realAudio
             }
           } catch (e) { out.ttError = String(e && e.message) }
@@ -4243,11 +4242,12 @@ async function runSelfTest() {
       ' 在物理行内=' + probe.ttRowInPhys + ' 在右侧=' + probe.ttOnRight +
       ' 行内不溢出=' + probe.ttWithinRow + ' 坐标=' + JSON.stringify(probe.ttRowBox) +
       (probe.ttError ? '  err=' + probe.ttError : ''))
-    say(probe.ttPokeSilent === true && probe.ttOn === true && probe.ttAnimRan === true &&
-        probe.ttMusicTried === true && probe.ttPokes >= 2,
-      '★ 打开后：音乐起播 + 点击动画在循环（无声版本）',
-      'silent API=' + probe.ttPokeSilent + ' 开着=' + probe.ttOn +
-      ' 1.6 秒内跑了 ' + probe.ttPokes + ' 次动画' + ' 试播过=' + probe.ttMusicTried)
+    say(probe.ttApi === true && probe.ttOn === true && probe.ttAnimRan === true &&
+        probe.ttMusicTried === true && probe.ttPokes >= 5,
+      '★ 打开后：音乐起播 + 点击动画在循环（压 0.25s / 弹 0.25s）',
+      '开着=' + probe.ttOn +
+      ' 1.6 秒内切了 ' + probe.ttPokes + ' 拍（250ms 一拍）' +
+      ' 压到 scaleY=' + probe.ttSquashY + ' 试播过=' + probe.ttMusicTried)
     say(probe.ttOff === true && probe.ttPaused === true && probe.ttPokeCleared === true &&
         probe.ttAnimStopped === true,
       '★ 关掉后：音乐停 + 动画停 + 立绘复位（恢复原状）',
