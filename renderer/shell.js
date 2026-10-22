@@ -500,6 +500,9 @@
     // （它要把自己的标志塞进形象状态机的优先级里）
     await loadScript('/laugh-sprite.js')
     await loadScript('/now-playing.js')
+    // 通透模式（菜单里「拖动物理」右边的开关）—— 要在 pet-collide 之后
+    // （它复用 pet-collide 的 pokeSilent 做无声点击动画）
+    await loadScript('/tongtou-mode.js')
 
     // ⚠️⚠️⚠️ **就绪等待：轮询到挂件真就绪就立刻启动，不再盲等 4 秒。**
     //

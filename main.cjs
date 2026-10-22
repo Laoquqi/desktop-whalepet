@@ -2664,6 +2664,64 @@ async function runSelfTest() {
           //    改成验证函数在位 + 上报链路通，功能本身靠真人实测。
           out.pokeOk = !!(window.__dshpetCollide && typeof window.__dshpetCollide.poke === 'function')
           out.collideApi = window.__dshpetCollide ? Object.keys(window.__dshpetCollide) : null
+
+          // —— 【桌宠版】通透模式（菜单「拖动物理」右边的开关）——
+          // ⚠️ 真 Audio 在**隐藏窗口**里 play() 会把渲染进程卡死
+          //    （和上面 poke() 那条注释同一个坑）。所以这里换成假 Audio 试开关，
+          //    只验"开关逻辑/动画循环/复位"，声音本身靠真人实测。
+          try {
+            const wm4 = q('.dshwv-menu')
+            const physRow = wm4 ? wm4.querySelector('.dshpet-phys-row') : null
+            const ttGroup = physRow ? physRow.querySelector('.dshpet-tt-group') : null
+            out.ttMenuExists = !!wm4
+            out.ttPhysRowExists = !!physRow
+            out.ttRowInPhys = !!ttGroup
+            out.ttApi = !!(window.__dshpetTongtou && typeof window.__dshpetTongtou.set === 'function')
+            out.ttPokeSilent = !!(window.__dshpetCollide && typeof window.__dshpetCollide.pokeSilent === 'function')
+            if (physRow && ttGroup) {
+              const rl = physRow.querySelector('span')
+              const rg = ttGroup.getBoundingClientRect()
+              const rp = physRow.getBoundingClientRect()
+              out.ttOnRight = rl ? (rg.left >= rl.getBoundingClientRect().right - 2) : false
+              out.ttWithinRow = rg.right <= rp.right + 1
+              out.ttRowBox = { row: [Math.round(rp.left), Math.round(rp.right)], group: [Math.round(rg.left), Math.round(rg.right)] }
+            }
+            if (out.ttApi) {
+              const realAudio = window.Audio
+              let played = 0, paused = 0
+              window.Audio = function () {
+                return {
+                  loop: false, volume: 1, preload: '', currentTime: 0,
+                  play: function () { played++; return Promise.resolve() },
+                  pause: function () { paused++ },
+                  addEventListener: function () {},
+                }
+              }
+              // 动画用"数次数"来验，别只看 style.transform ——
+              // 隐藏窗口里 rAF 基本不跑，而且 transform 可能被别的模块写成同一个值。
+              const C0 = window.__dshpetCollide
+              const origPoke = C0.pokeSilent
+              let pokes = 0
+              C0.pokeSilent = function () { pokes++; return origPoke.apply(this, arguments) }
+              window.__dshpetTongtou.set(true)
+              await sleep(1600)                        // POKE_MS=700 → 至少该跑 2 次
+              out.ttOn = window.__dshpetTongtou.isOn()
+              out.ttPokes = pokes
+              out.ttAnimRan = pokes >= 2
+              out.ttMusicTried = played > 0
+              window.__dshpetTongtou.set(false)
+              await sleep(900)                         // 等一个周期，确认真的不再跑了
+              out.ttPokesAfterOff = pokes
+              out.ttAnimStopped = (pokes === out.ttPokes)
+              out.ttOff = window.__dshpetTongtou.isOn() === false
+              out.ttPaused = paused > 0
+              const X0 = window.__dshpetSpriteXform
+              out.ttPokeCleared = X0 ? (X0.get('poke') === '') : null
+              C0.pokeSilent = origPoke
+              window.Audio = realAudio
+            }
+          } catch (e) { out.ttError = String(e && e.message) }
+
           // —— 「退出桌宠」相关（第一只的视角）——
           // 第一只**不该**有「退出桌宠」：托盘/热键那些老入口都指着它。
           out.firstPetInfo = await window.petApi.petInfo()
@@ -4177,6 +4235,26 @@ async function runSelfTest() {
       JSON.stringify(probe.petRects))
     say(probe.pokeOk === true,
       '★ 相撞反应能跑（动画 + 音效，无报错）', String(probe.pokeOk))
+
+    // —— 【桌宠版】通透模式 ——
+    say(probe.ttApi === true && probe.ttRowInPhys === true && probe.ttOnRight === true,
+      '★ 菜单「拖动物理」右边有「通透模式」开关',
+      'API=' + probe.ttApi + ' 菜单在=' + probe.ttMenuExists + ' 物理行在=' + probe.ttPhysRowExists +
+      ' 在物理行内=' + probe.ttRowInPhys + ' 在右侧=' + probe.ttOnRight +
+      ' 行内不溢出=' + probe.ttWithinRow + ' 坐标=' + JSON.stringify(probe.ttRowBox) +
+      (probe.ttError ? '  err=' + probe.ttError : ''))
+    say(probe.ttPokeSilent === true && probe.ttOn === true && probe.ttAnimRan === true &&
+        probe.ttMusicTried === true && probe.ttPokes >= 2,
+      '★ 打开后：音乐起播 + 点击动画在循环（无声版本）',
+      'silent API=' + probe.ttPokeSilent + ' 开着=' + probe.ttOn +
+      ' 1.6 秒内跑了 ' + probe.ttPokes + ' 次动画' + ' 试播过=' + probe.ttMusicTried)
+    say(probe.ttOff === true && probe.ttPaused === true && probe.ttPokeCleared === true &&
+        probe.ttAnimStopped === true,
+      '★ 关掉后：音乐停 + 动画停 + 立绘复位（恢复原状）',
+      '关着=' + probe.ttOff + ' 已暂停=' + probe.ttPaused +
+      ' 关后再等 0.9 秒动画次数不变=' + probe.ttAnimStopped +
+      '（' + probe.ttPokes + ' → ' + probe.ttPokesAfterOff + '）' +
+      ' poke 已清=' + probe.ttPokeCleared)
 
     // —— 【新】「退出桌宠」+ 体积碰撞 ——
     say(probe.firstPetInfo && probe.firstPetInfo.isExtra === false && probe.firstHasQuitRow === false,
