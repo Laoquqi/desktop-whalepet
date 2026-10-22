@@ -2721,6 +2721,39 @@ async function runSelfTest() {
             }
           } catch (e) { out.ttError = String(e && e.message) }
 
+          // —— 【桌宠版】自定义余额（精神充值，移植自上游 PR #260）——
+          // 真点一遍「应用 / 空白报错 / 取消覆盖」，确认显示层覆盖生效且不落脏数据。
+          try {
+            const wm5 = q('.dshwv-menu')
+            const bi = wm5 ? wm5.querySelector('input.dshwv-number[aria-label*="自定义余额"]') : null
+            const btns5 = wm5 ? Array.from(wm5.querySelectorAll('button')) : []
+            const applyBtn = btns5.filter(function (b) { return b.textContent === '应用' })[0]
+            const clearBtn = btns5.filter(function (b) { return b.textContent === '取消覆盖' })[0]
+            out.balRow = !!(bi && applyBtn && clearBtn)
+            if (out.balRow) {
+              const amtEl = q('.dshwv-amount')
+              // 先清一次，避免上一次跑留下的覆盖值干扰"覆盖前"的基线
+              clearBtn.click()
+              await sleep(100)
+              out.balBefore = amtEl ? amtEl.textContent : null
+              bi.value = '123.45'
+              applyBtn.click()
+              await sleep(150)
+              out.balApplied = amtEl ? amtEl.textContent : null
+              out.balLs = localStorage.getItem('dshw-balance-display-override')
+              bi.value = ''
+              applyBtn.click()
+              await sleep(120)
+              const st = wm5.querySelector('[role="status"]')
+              out.balErr = st ? st.textContent : null
+              out.balLsAfterErr = localStorage.getItem('dshw-balance-display-override')
+              clearBtn.click()
+              await sleep(150)
+              out.balCleared = amtEl ? amtEl.textContent : null
+              out.balLsCleared = localStorage.getItem('dshw-balance-display-override')
+            }
+          } catch (e) { out.balError = String(e && e.message) }
+
           // —— 「退出桌宠」相关（第一只的视角）——
           // 第一只**不该**有「退出桌宠」：托盘/热键那些老入口都指着它。
           out.firstPetInfo = await window.petApi.petInfo()
@@ -4255,6 +4288,21 @@ async function runSelfTest() {
       ' 关后再等 0.9 秒动画次数不变=' + probe.ttAnimStopped +
       '（' + probe.ttPokes + ' → ' + probe.ttPokesAfterOff + '）' +
       ' poke 已清=' + probe.ttPokeCleared)
+
+    // —— 【桌宠版】自定义余额（精神充值）——
+    say(probe.balRow === true,
+      '★ 主菜单有「自定义余额」输入框 + 「应用」+「取消覆盖」',
+      '输入框/按钮齐=' + probe.balRow + (probe.balError ? '  err=' + probe.balError : ''))
+    say(probe.balApplied && probe.balApplied.indexOf('123.45') >= 0 &&
+        probe.balLs === '123.45' &&
+        typeof probe.balErr === 'string' && probe.balErr.indexOf('有效') >= 0 &&
+        probe.balLsAfterErr === '123.45' &&
+        probe.balLsCleared === null && probe.balCleared !== probe.balApplied,
+      '★ 应用后气泡显示覆盖值；空白报错且不改值；取消覆盖后回到实际余额',
+      '覆盖前=' + JSON.stringify(probe.balBefore) + ' 应用后=' + JSON.stringify(probe.balApplied) +
+      ' 落盘=' + JSON.stringify(probe.balLs) + ' 空白报错=' + JSON.stringify(probe.balErr) +
+      ' 报错后仍=' + JSON.stringify(probe.balLsAfterErr) +
+      ' 取消后=' + JSON.stringify(probe.balCleared) + ' 键已删=' + (probe.balLsCleared === null))
 
     // —— 【新】「退出桌宠」+ 体积碰撞 ——
     say(probe.firstPetInfo && probe.firstPetInfo.isExtra === false && probe.firstHasQuitRow === false,
