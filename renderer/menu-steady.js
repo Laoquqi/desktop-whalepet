@@ -1,15 +1,15 @@
 // ============================================================================
-// 菜单稳态（精简版）：启动预热
+// 菜单稳态（最终版）：启动预热
 // ============================================================================
-// 历史与本文件的关系：
-//   用户报"开 ☰ 菜单卡一下弹一下"，本文件第一版用 visibility 先藏后放 +
-//   淡入重放 + 几何守卫硬拗，越修越多。后来 CDP 逐帧复盘发现真正的根因
-//   是 vendor 的 transform 过渡用了 cubic-bezier(.34,1.3,.6,1)（y1=1.3
-//   过冲 ~14%）：0.4.2 菜单变高后，过冲的像素幅度大到肉眼可见 —— 开/关/
-//   记账返回三种"弹一下/瞬移"同源。该曲线已在 shell.css 里用标准 ease-out
-//   覆盖（vendor 零改动），原生开合动画平滑，本文件第一版的所有补丁全部
-//   撤销。
-// 现在只剩：启动预热（隐形开合一次，把首开才会建的懒内容提前建好）。
+// 跳动根因（CDP 逐帧实测）：菜单盒 shrink-to-fit，打开 ~255ms 后一次异步
+// 内容回填让盒子 319→334、行折行致高度 788↔663 —— 开/关/记账返回的全部
+// "弹一下/瞬移"都源于这 15px 宽度差的内容重排。
+// 修复已收敛为两条纯 CSS（shell.css）：
+//   · .dshwv-menu{ width:340px !important }   —— 盒子宽度恒定（vendor
+//     max-width 上限），内容更新只在盒内回填，零重排；
+//   · .dshwv-menu{ transition: ... ease }     —— 去掉 vendor 过冲曲线。
+// 开合动画全部回到 vendor 原生淡入淡出，本文件只剩启动预热（隐形开合
+// 一次，把首开才会建的懒内容提前建好）。
 // ⚠️ 自检模式不干活。
 (function () {
   'use strict'
@@ -30,12 +30,38 @@
           m.classList.remove('dshwv-menu-open')
           m.style.removeProperty('visibility')
         } catch (e) {}
-      }, 350)
+      }, 420)
       log('预热完成')
     } catch (e) {}
   }
 
+  // —— 菜单打开/内容变化的同帧限高 ——
+  // menu-fit 的 300ms 轮询会让"自然高度 788 → 限高 663"的钳制迟到 300ms，
+  // 用户看到菜单先以超高状态出现再缩回去（跳动）。这里盯住菜单的 class
+  // 与子树样式：打开的那一帧、以及菜单内部样式变化（记账返回重建等）的
+  // 同一帧，直接调 menu-fit 的 fit() —— 限高从第一帧就生效。
+  var fitObs = null
+  function watchFit() {
+    var menu = document.querySelector('.dshwv-menu')
+    if (!menu || fitObs) return !!menu
+    fitObs = new MutationObserver(function () {
+      try {
+        if (menu.classList.contains('dshwv-menu-open') && window.__dshpetMenuFitApi) {
+          window.__dshpetMenuFitApi.fit()
+        }
+      } catch (e) {}
+    })
+    fitObs.observe(menu, { attributes: true, attributeFilter: ['class', 'style'], childList: true, subtree: true })
+    return true
+  }
   function start() {
+    var tries = 0
+    var t = setInterval(function () {
+      tries++
+      if (watchFit()) clearInterval(t)
+      else if (tries > 60) clearInterval(t)
+    }, 250)
+    watchFit()
     setTimeout(prewarm, 2000)
     setTimeout(prewarm, 5000)
     log('已就绪')

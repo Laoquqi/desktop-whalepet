@@ -26,6 +26,7 @@
   'use strict'
 
   var lastKey = ''
+  var clearTimer = null
 
   function log(m) {
     try { if (window.petApi && window.petApi.log) window.petApi.log('[菜单高度] ' + m) } catch (e) {}
@@ -35,16 +36,27 @@
     var m = document.querySelector('.dshwv-menu')
     if (!m) return
 
-    // 菜单收起：把我们加的样式撤干净（挂件自己也会清，但别留下残留）
+    // 菜单收起：把我们加的样式撤干净（挂件自己也会清，但别留下残留）。
+    // ⚠️ 撤除必须**延迟到淡出结束之后**（350ms）：渐出动画的 100ms 里
+    //    内容回流会让盒子 663→788 长高 125px，用户看到渐出中途"弹一下"
+    //    （CDP 逐帧实测）。淡出结束时菜单已 opacity:0，撤了也没人看见。
     if (!m.classList.contains('dshwv-menu-open')) {
-      if (lastKey) {
-        m.style.maxHeight = ''
-        m.style.overflowY = ''
-        m.style.overscrollBehavior = ''
-        lastKey = ''
+      if (lastKey && !clearTimer) {
+        clearTimer = setTimeout(function () {
+          clearTimer = null
+          try {
+            if (!m.classList.contains('dshwv-menu-open')) {
+              m.style.maxHeight = ''
+              m.style.overflowY = ''
+              m.style.overscrollBehavior = ''
+              lastKey = ''
+            }
+          } catch (err) {}
+        }, 350)
       }
       return
     }
+    try { if (clearTimer) { clearTimeout(clearTimer); clearTimer = null } } catch (err) {}
 
     var bottomPx = parseFloat(m.style.bottom)
     if (!isFinite(bottomPx)) return
