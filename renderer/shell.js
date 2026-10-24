@@ -487,6 +487,8 @@
     await loadScript('/menu-extras.js')
     // 游戏模式：气泡 + 设置行 + 立绘矩形上报 + 游戏隐藏穿透闸
     await loadScript('/game-mode.js')
+    // 菜单稳态：开菜单不跳不闪（先藏后放 + 启动预热）
+    await loadScript('/menu-steady.js')
     // 面板居中：二级/三级面板 → 屏幕正中央 + 可拖动（自检模式自动跳过）
     await loadScript('/menu-center.js')
     // 米粒面板版面修补：按行打类名（带单位的行永远不换行）
