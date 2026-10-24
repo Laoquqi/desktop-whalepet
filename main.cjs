@@ -531,7 +531,9 @@ async function bootHost() {
   turns.start()
 
   // —— 页面也从本地服务发出去（同源，见 lib/shell.js）——
-  shellMod.mountShell(server, ROOT)
+  // musicDir 交给主进程算：打包后音乐在 **exe 旁边**（extraFiles），不在 asar 里 ——
+  // 因为「自定义」按钮要用资源管理器打开它，用户还要往里丢歌，asar 里做不到。
+  shellMod.mountShell(server, ROOT, { musicDir: musicDir() })
 
   log(`共 ${server.routes.length} 条路由，端口 ${port}`)
   return port
@@ -1838,6 +1840,19 @@ function petDir() {
   return process.env.DSH_PET_DIR || (app.isPackaged ? path.dirname(process.execPath) : ROOT)
 }
 function songsDir() { return path.join(petDir(), 'vendor', 'rice', 'songs') }
+// 通透模式的音乐文件夹。和 songsDir() 同一套规则（exe 所在目录 + extraFiles），
+// 所以「自定义」按钮打开的就是**用户能真的往里丢歌**的那个文件夹。
+function musicDir() { return path.join(petDir(), 'vendor', 'whale', 'assets', 'music') }
+ipcMain.on('pet:open-music-folder', () => {
+  try {
+    var dir = musicDir()
+    if (!fs.existsSync(dir)) fs.mkdirSync(dir, { recursive: true })
+    shell.openPath(dir).then(function (err) {
+      if (err) log('打开 music 文件夹失败：' + err)
+      else log('已打开 music 文件夹：' + dir)
+    })
+  } catch (err) { log('打开 music 文件夹异常：' + (err && err.message)) }
+})
 ipcMain.on('pet:open-songs-folder', () => {
   try {
     var dir = songsDir()
@@ -2665,25 +2680,68 @@ async function runSelfTest() {
           out.pokeOk = !!(window.__dshpetCollide && typeof window.__dshpetCollide.poke === 'function')
           out.collideApi = window.__dshpetCollide ? Object.keys(window.__dshpetCollide) : null
 
-          // —— 【桌宠版】通透模式（菜单「拖动物理」右边的开关）——
+          // —— 【桌宠版】通透模式（单独一行：开关 + 歌曲选择 + 自定义）——
           // ⚠️ 真 Audio 在**隐藏窗口**里 play() 会把渲染进程卡死
           //    （和上面 poke() 那条注释同一个坑）。所以这里换成假 Audio 试开关，
-          //    只验"开关逻辑/动画循环/复位"，声音本身靠真人实测。
+          //    只验"开关逻辑/动画循环/复位/换歌"，声音本身靠真人实测。
           try {
             const wm4 = q('.dshwv-menu')
             const physRow = wm4 ? wm4.querySelector('.dshpet-phys-row') : null
-            const ttGroup = physRow ? physRow.querySelector('.dshpet-tt-group') : null
+            const ttRow = wm4 ? wm4.querySelector('.dshpet-tt-row') : null
             out.ttMenuExists = !!wm4
             out.ttPhysRowExists = !!physRow
-            out.ttRowInPhys = !!ttGroup
+            out.ttRowOwn = !!ttRow
+            // 用户要的是"单独一行" —— 所以它必须**不在**「拖动物理」那一行里面
+            out.ttNotInPhys = !!(ttRow && physRow && !physRow.contains(ttRow))
+            const cbEl = ttRow ? ttRow.querySelector('input[type=checkbox]') : null
+            const selEl = ttRow ? ttRow.querySelector('select') : null
+            const btnEl = ttRow ? ttRow.querySelector('button') : null
+            out.ttCb = !!cbEl
+            out.ttSel = !!selEl
+            out.ttBtn = !!btnEl
+            out.ttOpts = selEl ? selEl.options.length : 0
             out.ttApi = !!(window.__dshpetTongtou && typeof window.__dshpetTongtou.set === 'function')
-            if (physRow && ttGroup) {
-              const rl = physRow.querySelector('span')
-              const rg = ttGroup.getBoundingClientRect()
-              const rp = physRow.getBoundingClientRect()
-              out.ttOnRight = rl ? (rg.left >= rl.getBoundingClientRect().right - 2) : false
-              out.ttWithinRow = rg.right <= rp.right + 1
-              out.ttRowBox = { row: [Math.round(rp.left), Math.round(rp.right)], group: [Math.round(rg.left), Math.round(rg.right)] }
+            if (ttRow && cbEl && selEl && btnEl) {
+              const rc = cbEl.getBoundingClientRect()
+              const rs = selEl.getBoundingClientRect()
+              const rb = btnEl.getBoundingClientRect()
+              const rr = ttRow.getBoundingClientRect()
+              // 顺序：开关 → 选择栏 → 自定义（各自在前一个的右边）
+              out.ttOrder = (rs.left >= rc.right - 2) && (rb.left >= rs.right - 2)
+              out.ttRowFits = rr.right <= (wm4.getBoundingClientRect().right + 1)
+              out.ttRowBox = {
+                cb: [Math.round(rc.left), Math.round(rc.right)],
+                sel: [Math.round(rs.left), Math.round(rs.right)],
+                btn: [Math.round(rb.left), Math.round(rb.right)],
+                row: [Math.round(rr.left), Math.round(rr.right)],
+              }
+            }
+            if (out.ttApi) {
+              const st0 = window.__dshpetTongtou._state() || {}
+              out.ttSong0 = st0.song
+              out.ttSongCount = st0.songCount
+              out.ttSongNames = st0.songNames
+              // 换一首试试（此时开关是关的，不会出声）；
+              // 试完**把选择改回原样**，别把用户记住的那首改掉。
+              if (selEl && selEl.options.length >= 2) {
+                const lsBefore = (function () {
+                  try { return localStorage.getItem('dshpet-tt-song') } catch (e) { return null }
+                })()
+                const want2 = selEl.options[1].value
+                selEl.value = want2
+                selEl.dispatchEvent(new Event('change', { bubbles: true }))
+                await sleep(80)
+                const stS = window.__dshpetTongtou._state() || {}
+                out.ttSong1 = stS.song
+                out.ttSwitchOk = (stS.song === want2) && (want2 !== out.ttSong0)
+                selEl.value = out.ttSong0 || ''
+                selEl.dispatchEvent(new Event('change', { bubbles: true }))
+                await sleep(40)
+                try {
+                  if (lsBefore === null) localStorage.removeItem('dshpet-tt-song')
+                  else localStorage.setItem('dshpet-tt-song', lsBefore)
+                } catch (e) {}
+              }
             }
             if (out.ttApi) {
               const realAudio = window.Audio
@@ -2718,6 +2776,11 @@ async function runSelfTest() {
               const X0 = window.__dshpetSpriteXform
               out.ttPokeCleared = X0 ? (X0.get('poke') === '') : null
               window.Audio = realAudio
+              // 假 Audio 期间建出来的那个实例要扔掉，否则这次运行后面
+              // 真人再开开关时用的还是假货（自检窗口本身马上就关了，但别留雷）
+              if (typeof window.__dshpetTongtou._resetAudio === 'function') {
+                window.__dshpetTongtou._resetAudio()
+              }
             }
           } catch (e) { out.ttError = String(e && e.message) }
 
@@ -4269,12 +4332,22 @@ async function runSelfTest() {
       '★ 相撞反应能跑（动画 + 音效，无报错）', String(probe.pokeOk))
 
     // —— 【桌宠版】通透模式 ——
-    say(probe.ttApi === true && probe.ttRowInPhys === true && probe.ttOnRight === true,
-      '★ 菜单「拖动物理」右边有「通透模式」开关',
-      'API=' + probe.ttApi + ' 菜单在=' + probe.ttMenuExists + ' 物理行在=' + probe.ttPhysRowExists +
-      ' 在物理行内=' + probe.ttRowInPhys + ' 在右侧=' + probe.ttOnRight +
-      ' 行内不溢出=' + probe.ttWithinRow + ' 坐标=' + JSON.stringify(probe.ttRowBox) +
+    say(probe.ttApi === true && probe.ttRowOwn === true && probe.ttNotInPhys === true &&
+        probe.ttCb === true && probe.ttSel === true && probe.ttBtn === true,
+      '★ 「通透模式」单独一行（开关 + 歌曲选择栏 + 「自定义」按钮）',
+      'API=' + probe.ttApi + ' 单独一行=' + probe.ttRowOwn +
+      ' 不在物理行内=' + probe.ttNotInPhys + ' 开关=' + probe.ttCb +
+      ' 选择栏=' + probe.ttSel + ' 自定义=' + probe.ttBtn +
+      ' 选项数=' + probe.ttOpts + ' 菜单在=' + probe.ttMenuExists +
       (probe.ttError ? '  err=' + probe.ttError : ''))
+    say(probe.ttOrder === true && probe.ttRowFits === true,
+      '★ 排列顺序对（开关 → 选择栏 → 自定义）且不撑出菜单',
+      '顺序对=' + probe.ttOrder + ' 行内不溢出=' + probe.ttRowFits +
+      ' 坐标=' + JSON.stringify(probe.ttRowBox))
+    say(probe.ttSongCount >= 2 && probe.ttSwitchOk === true,
+      '★ 选择栏检索到音乐文件夹里的全部歌曲，且能切换',
+      '歌单 ' + probe.ttSongCount + ' 首=' + JSON.stringify(probe.ttSongNames) +
+      ' 切换「' + probe.ttSong0 + '」→「' + probe.ttSong1 + '」生效=' + probe.ttSwitchOk)
     say(probe.ttApi === true && probe.ttOn === true && probe.ttAnimRan === true &&
         probe.ttMusicTried === true && probe.ttPokes >= 5,
       '★ 打开后：音乐起播 + 点击动画在循环（压 0.25s / 弹 0.25s）',

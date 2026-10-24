@@ -45,6 +45,9 @@ contextBridge.exposeInMainWorld('petApi', {
   openDshWeb: (opts) => ipcRenderer.invoke('pet:open-dsh-web', opts || {}),
   // 「选择音乐…」→ 打开桌宠自己的 songs 文件夹（路径由主进程拼，渲染进程不传路径）
   openSongsFolder: () => ipcRenderer.send('pet:open-songs-folder'),
+  // 「自定义」（通透模式的歌单）→ 打开**音乐文件夹**（同样由主进程拼路径）。
+  // 用户往里面丢新歌，下次打开菜单选择栏就会自动出现。
+  openMusicFolder: () => ipcRenderer.send('pet:open-music-folder'),
   // 「角色」那一行的「选择图片…」→ 系统图片选择框（默认落在 Screenshots），
   // 返回 { ok, name, dataUrl } —— 用 data URL 免得渲染进程再操心 file:// 限制
   pickImage: () => ipcRenderer.invoke('pet:pick-image'),

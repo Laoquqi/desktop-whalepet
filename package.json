@@ -34,6 +34,7 @@
       "lib/**/*",
       "renderer/**/*",
       "vendor/**/*",
+    "!vendor/whale/assets/music/**",
       "assets/**/*",
       "scripts/**/*",
       "README.md",
@@ -63,6 +64,10 @@
       {
         "from": "vendor/rice/songs",
         "to": "vendor/rice/songs"
+      },
+      {
+        "from": "vendor/whale/assets/music",
+        "to": "vendor/whale/assets/music"
       }
     ]
   }
