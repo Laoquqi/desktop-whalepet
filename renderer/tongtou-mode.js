@@ -115,6 +115,7 @@
     var menu = document.querySelector('.dshwv-menu')
     if (!menu) return false
     ensureCss()
+    attachMenuObs(menu)
 
     var exist = menu.querySelector('.dshpet-tt-row')
     if (exist) {
@@ -208,6 +209,27 @@
       rowObs = new MutationObserver(function () { injectRow() })
       rowObs.observe(parent, { childList: true })
     } catch (e) { rowObs = null }
+  }
+
+  // 盯住菜单的 class：**每次打开菜单就重读一次歌单**。
+  // ⚠️ 为什么非要有这个观察器：实测挂件**不会**重建菜单行（开一次、关一次，
+  //    我们那行还在原地），所以 injectRow 的早退分支让"创建时拉歌单"只发生一次。
+  //    没有它的话，用户点「自定义」往文件夹里加了歌、再开菜单也看不见 ——
+  //    而"选择栏要能检索到文件夹里所有歌"正是这次的需求。
+  var menuObs = null
+  var menuEl = null
+  function attachMenuObs(menu) {
+    if (!menu) return
+    if (menuEl === menu && menuObs) return
+    if (menuObs) { try { menuObs.disconnect() } catch (e) {} }
+    menuEl = menu
+    try {
+      menuObs = new MutationObserver(function () {
+        // 只在"打开"那一刻刷；关菜单不刷，免得白发请求
+        if (menu.classList.contains('dshwv-menu-open')) refreshSongs()
+      })
+      menuObs.observe(menu, { attributes: true, attributeFilter: ['class'] })
+    } catch (e) { menuObs = null }
   }
 
   // --------------------------------------------------------------------------
