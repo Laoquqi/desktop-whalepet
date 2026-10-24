@@ -104,6 +104,8 @@ let shim = null
 let credentials = null
 let turns = null
 let nowPlaying = null
+let gameMode = null             // 游戏模式模块（lib/game-mode.js，自检不启动）
+let gameWhaleRect = null        // 渲染端上报的立绘屏幕矩形 { x,y,right,bottom,at }
 let nowPlayingMod = null   // 自检要直接调它的纯函数 pickSong()
 let lyricsModRef = null    // 自检要直接调它的纯函数 parseLrc / pickBest
 let win = null
@@ -453,14 +455,16 @@ async function loadLib() {
   const nowPlayingMod = await import(u('lib/now-playing.js'))
   const lyricsMod = await import(u('lib/lyrics.js'))
   const fsWatchMod = await import(u('lib/fullscreen-watch.js'))
-  return { serverMod, shimMod, credMod, turnsMod, shellMod, nowPlayingMod, lyricsMod, fsWatchMod }
+  let gameModeMod = null
+  try { gameModeMod = await import(u('lib/game-mode.js')) } catch (err) { log('game-mode 加载失败：' + (err && err.message)) }
+  return { serverMod, shimMod, credMod, turnsMod, shellMod, nowPlayingMod, lyricsMod, fsWatchMod, gameModeMod }
 }
 
 // ---------------------------------------------------------------------------
 // 启动宿主
 // ---------------------------------------------------------------------------
 async function bootHost() {
-  const { serverMod, shimMod, credMod, turnsMod, shellMod, nowPlayingMod: npm, lyricsMod, fsWatchMod } = await loadLib()
+  const { serverMod, shimMod, credMod, turnsMod, shellMod, nowPlayingMod: npm, lyricsMod, fsWatchMod, gameModeMod } = await loadLib()
   nowPlayingMod = npm
   lyricsModRef = lyricsMod
   fsWatchModRef = fsWatchMod
@@ -483,6 +487,150 @@ async function bootHost() {
   })
   nowPlaying.start()
 
+  // ========================================================================
+  // 游戏模式（移植自上游 whale-pet-desktop 0.4.2）
+  // ========================================================================
+  // ① 游戏识别在 lib/game-mode.js（PS 探针 + 检测链 + 光标采样）；
+  // ② 显隐在这边：mode=always（启动即隐）/ hover（悬停隐藏）→
+  //    **沿用 setPetHidden 的替代手法（透明度 0 + 整窗穿透），绝不 hide()/show()**——
+  //    WS_EX_NOACTIVATE 窗口 hide/show 后点击命中会失效（历史大坑）；
+  // ③ FPS 防误触：光标不可见（PS 采样 GetCursorInfo）→ 暂停悬停隐藏；
+  // ④ 与既有隐藏状态的互斥：托盘隐藏 / 全屏让路 / 面板铺满优先，游戏显隐不越权。
+  // ⚠️ 自检模式不启动（探针会切前台窗口，自检断言会乱）。
+  gameMode = null
+  let gameRunningPrev = null
+  let gameAlwaysTimer = null
+  let gameHoverOutAt = 0
+  let gameHoverHitSince = 0
+  if (!SELFTEST && gameModeMod) {
+    try {
+      gameMode = gameModeMod.createGameMode({
+        dataDir: DATA_DIR, rootDir: ROOT, log,
+        onState: (st) => { onGameStateChanged(st) },
+      })
+      gameMode.start()
+    } catch (err) { log('游戏模式启动失败：' + (err && err.message)); gameMode = null }
+  }
+
+  function gamePanelOpen() {
+    for (const w of pets) { try { if (!w.isDestroyed() && w.__panelExpanded) return true } catch (err) {} }
+    return false
+  }
+  // 立绘屏幕矩形是否就绪且新鲜（渲染端每 500ms 上报一次）
+  function gameWhaleRectFresh() {
+    return !!(gameWhaleRect && gameWhaleRect.right > gameWhaleRect.x && (Date.now() - gameWhaleRect.at) < 5000)
+  }
+  function setGameHidden(h) {
+    for (const w of pets) {
+      try {
+        if (w.isDestroyed()) continue
+        if (h) {
+          // 别处已把它藏了（托盘/让路/面板铺满）就不掺和
+          if (w.__gameHidden || w.__trayHidden || w.__fsYielded || w.__panelExpanded) continue
+          w.__gameHidden = true
+          w.__gameHiddenAt = Date.now()
+          try { w.setOpacity(0) } catch (err) {}
+          interactiveOf.delete(w)
+          try { w.setIgnoreMouseEvents(true, { forward: true }) } catch (err) {}
+          interactiveOf.set(w, false)
+          try { w.webContents.send('pet:game-hidden', true) } catch (err) {}
+        } else {
+          if (!w.__gameHidden) continue
+          w.__gameHidden = false
+          try { w.setOpacity(1) } catch (err) {}
+          try { w.webContents.send('pet:game-hidden', false) } catch (err) {}
+          if (!w.__trayHidden && !w.__fsYielded && !w.__panelExpanded) {
+            interactiveOf.delete(w)
+            try { w.setIgnoreMouseEvents(false) } catch (err) {}
+            interactiveOf.set(w, true)
+            try { w.webContents.send('pet:reeval-interactive') } catch (err) {}
+          }
+        }
+      } catch (err) {}
+    }
+  }
+  function onGameStateChanged(st) {
+    try {
+      const running = !!st.running
+      // 状态变化 → 通知渲染端弹游戏气泡（渲染端自己算文案与去重）
+      if (gameRunningPrev !== null && running !== gameRunningPrev) {
+        for (const w of pets) {
+          try { if (!w.isDestroyed()) w.webContents.send('pet:game-toast', { running, name: st.name || '', exe: st.exe || '' }) } catch (err) {}
+        }
+      }
+      gameRunningPrev = running
+      applyGameVisibility(st)
+    } catch (err) {}
+  }
+  function applyGameVisibility(st) {
+    try {
+      const running = !!st.running
+      const mode = st.mode
+      const panelOpen = gamePanelOpen()
+      if (mode === 'always' && running && !panelOpen) {
+        if (!gameRunningPrev) {
+          // 启动瞬间：先让游戏提示气泡展示（6.5s），8 秒后再藏
+          try { if (gameAlwaysTimer) clearTimeout(gameAlwaysTimer) } catch (err) {}
+          gameAlwaysTimer = setTimeout(() => {
+            try {
+              const stillOpen = gamePanelOpen()
+              const stillRunning = gameMode ? gameMode.getState().running : false
+              if (!stillOpen && stillRunning) setGameHidden(true)
+            } catch (err) {}
+          }, 8000)
+        } else {
+          setGameHidden(true)
+        }
+      } else if (mode === 'hover' && running) {
+        // 悬停模式：显隐交给下面的 120ms 悬停轮询，这里不抢
+        try { if (gameAlwaysTimer) clearTimeout(gameAlwaysTimer) } catch (err) {}
+      } else {
+        try { if (gameAlwaysTimer) clearTimeout(gameAlwaysTimer) } catch (err) {}
+        setGameHidden(false)
+      }
+    } catch (err) {}
+  }
+  // —— 悬停隐藏轮询（120ms）：游戏运行 + 悬停模式 + 防误触开时生效 ——
+  setInterval(() => {
+    try {
+      if (!gameMode) return
+      const st = gameMode.getState()
+      if (!(st.running && st.mode === 'hover' && st.antiMistouch)) return
+      if (gamePanelOpen()) return
+      const cur = gameMode.cursorState()
+      const fresh = cur.fresh && (Date.now() - cur.at) < 3000
+      // FPS：光标被游戏隐藏（采样可见=否）→ 暂停悬停隐藏（用户第 3 项功能）
+      const cursorHidden = fresh && cur.visible === false
+      let cp
+      if (fresh && (cur.x || cur.y)) cp = { x: cur.x, y: cur.y }
+      else cp = screen.getCursorScreenPoint()
+      const hit = !cursorHidden && gameWhaleRectFresh() &&
+        cp.x >= gameWhaleRect.x && cp.x <= gameWhaleRect.right &&
+        cp.y >= gameWhaleRect.y && cp.y <= gameWhaleRect.bottom
+      if (hit) {
+        gameHoverOutAt = 0
+        // 光标在鲸鱼上连续停留 ≥400ms 才藏（快速扫过不触发）
+        if (!gameHoverHitSince) gameHoverHitSince = Date.now()
+        if (!pets.some((w) => w.__gameHidden) && Date.now() - gameHoverHitSince >= 400) setGameHidden(true)
+      } else if (pets.some((w) => w.__gameHidden)) {
+        // 移出后延迟 800ms 再恢复（期间移回则取消）
+        if (!gameHoverOutAt) gameHoverOutAt = Date.now()
+        else if (Date.now() - gameHoverOutAt >= 800) { gameHoverOutAt = 0; gameHoverHitSince = 0; setGameHidden(false) }
+      } else {
+        gameHoverOutAt = 0
+        gameHoverHitSince = 0
+      }
+    } catch (err) {}
+  }, 120)
+  // 6 小时保险丝：万一状态卡住，别把她藏一整天
+  setInterval(() => {
+    try {
+      for (const w of pets) {
+        if (!w.isDestroyed() && w.__gameHiddenAt && Date.now() - w.__gameHiddenAt > 6 * 3600 * 1000) setGameHidden(false)
+      }
+    } catch (err) {}
+  }, 60000)
+
   // 「全屏让路」：前台是铺满主屏的应用（视频全屏 / 无边框播放器 / F11…）时，
   // 把桌宠窗口藏起来别挡视频，全屏结束再放回来。托盘里有一项开关（默认开）。
   // ⚠️ 自检模式别开 —— 自检会切窗口、弹面板，前台窗口一变就把桌宠藏了，
@@ -501,6 +649,22 @@ async function bootHost() {
   // 「每轮消耗」的替代数据源：拦截 /dsh-whale/last-turn.json
   // 必须在插件 apply() 之前登记，否则原处理器已经挂上去了。
   shim.override('/dsh-whale/last-turn.json', turns.handleLastTurn)
+
+  // 游戏模式气泡桥：插件的 whaleSysPush 是 IIFE 内部函数，页面侧够不着 ——
+  // 下发 widget.js 时注入一行（与上游 Seeker 宿主同一手法），渲染端的
+  // 游戏提示就排队走插件自己的系统泡泡链路。
+  shim.override('/dsh-whale/widget.js', (req, res, orig) => {
+    try {
+      let text = fs.readFileSync(path.join(ROOT, 'vendor/whale/assets/whale-widget.js'), 'utf8')
+      if (text.indexOf('window.__whaleSysPush') < 0) {
+        const needle = String.fromCharCode(10) + 'function showUsagePopup('
+        const bridge = String.fromCharCode(10) + "try { window.__whaleSysPush = whaleSysPush; window.__whaleSysDebug = function () { try { return JSON.stringify({ on: !!bubbleOn, q: whaleSysQueue.length, item: (whaleSysItem && whaleSysItem.kind) || '', scene: (bubbleScene && bubbleScene.kind) || '', cost: !!costBubbleActive, wait: !!waitShown, shown: !!bubbleShown }) } catch (err) { return 'debug-err' } } } catch (e) {}"
+        if (text.indexOf(needle) >= 0) text = text.replace(needle, bridge + needle)
+      }
+      res.writeHead(200, { 'Content-Type': 'application/javascript; charset=utf-8', 'Cache-Control': 'no-store' })
+      res.end(text)
+    } catch (err) { try { orig(req, res) } catch (e) {} }
+  })
 
   // 内置泡泡图：24 张图**直接写在 vendor/whale/lib/index.js 的
   // DEFAULT_BUBBLE_IMGS 里**了，所以这里不再需要任何路由覆盖 ——
@@ -1930,6 +2094,20 @@ function pushNowPlaying(song) {
   if (!win || win.isDestroyed()) return
   try { win.webContents.send('pet:now-playing', song || null) } catch (err) {}
 }
+
+// —— 游戏模式 IPC ——
+ipcMain.on('pet:whale-rect', (e, d) => {
+  try { if (d && d.right > d.x) gameWhaleRect = { x: Number(d.x) || 0, y: Number(d.y) || 0, right: Number(d.right) || 0, bottom: Number(d.bottom) || 0, at: Date.now() } } catch (err) {}
+})
+ipcMain.handle('pet:game-get', () => {
+  if (!gameMode) return { ok: false, error: 'no-module', mode: 'hover', antiMistouch: true, list: [], state: { ok: true, running: false } }
+  return gameMode.getSettings()
+})
+ipcMain.handle('pet:game-set', (e, patch) => {
+  if (!gameMode) return { ok: false, error: 'no-module' }
+  return gameMode.setSettings(patch)
+})
+ipcMain.handle('pet:game-procs', () => (gameMode ? gameMode.getProcs() : { ok: true, list: [] }))
 
 ipcMain.handle('pet:now-playing-set', (e, on) => {
   if (!nowPlaying) return { ok: false, enabled: false, error: 'no-module' }

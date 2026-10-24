@@ -167,6 +167,7 @@
     //    并没有真的隐藏 —— 判成"可点"就会吞掉它覆盖区域的桌面点击
     //    （用户对着空气点不动图标）。
     if (trayHidden) return false
+    if (window.__dshpetGameHidden) return false   // 游戏模式隐藏期间（透明+穿透），交互判定直接让路
     // ⚠️ **米粒设置面板开着的时候，整窗都要接收鼠标事件。**
     //    不然"点空白处关闭面板"永远不生效：面板之外的区域是穿透的，
     //    点击直接落到桌面上，页面根本收不到 —— 面板里那个"点外面关闭"的
@@ -484,6 +485,8 @@
     // （窗口设了 setFocusable(false)，Windows 上拿不到键盘焦点）
     await loadScript('/panel-focus.js')
     await loadScript('/menu-extras.js')
+    // 游戏模式：气泡 + 设置行 + 立绘矩形上报 + 游戏隐藏穿透闸
+    await loadScript('/game-mode.js')
     // 面板居中：二级/三级面板 → 屏幕正中央 + 可拖动（自检模式自动跳过）
     await loadScript('/menu-center.js')
     // 米粒面板版面修补：按行打类名（带单位的行永远不换行）

@@ -125,6 +125,19 @@ contextBridge.exposeInMainWorld('petApi', {
   notifyPlaced: () => ipcRenderer.send('pet:placed'),
   // 「识别歌曲和作者」：开关走主进程（它要常驻跑 PowerShell 轮询媒体会话）
   nowPlayingSet: (on) => ipcRenderer.invoke('pet:now-playing-set', !!on),
+  // —— 游戏模式 ——
+  // 订阅游戏状态（主进程在识别到"开始/结束游戏"或设置变化时推送）
+  onGameState: (fn) => ipcRenderer.on('pet:game-state', (e, st) => { try { fn(st) } catch (err) {} }),
+  // 订阅游戏提示（开始/结束游戏的那一刻推送，渲染端排队弹系统气泡）
+  onGameToast: (fn) => ipcRenderer.on('pet:game-toast', (e, d) => { try { fn(d) } catch (err) {} }),
+  // 每 500ms 上报立绘屏幕矩形（主进程的悬停隐藏按它判断光标是否在小鲸鱼上）
+  reportWhaleRect: (r) => ipcRenderer.send('pet:whale-rect', r),
+  // 设置读写 + 「从运行中选择」的进程列表
+  gameGet: () => ipcRenderer.invoke('pet:game-get'),
+  gameSet: (patch) => ipcRenderer.invoke('pet:game-set', patch),
+  gameProcs: () => ipcRenderer.invoke('pet:game-procs'),
+  // 游戏隐藏（透明+穿透）期间的渲染端穿透闸
+  onGameHidden: (fn) => ipcRenderer.on('pet:game-hidden', (e, on) => { try { fn(on) } catch (err) {} }),
   nowPlayingGet: () => ipcRenderer.invoke('pet:now-playing-get'),
   // 「识别歌词」：识别歌曲的下一级开关
   nowPlayingLyricsSet: (on) => ipcRenderer.invoke('pet:now-playing-lyrics-set', !!on),
