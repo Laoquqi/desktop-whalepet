@@ -1,9 +1,10 @@
 # 大肥鱼桌宠
 
-把小鲸鱼余额挂件 **[dsh-whale-widget](https://github.com/MeteorNOX/DeepSeek-Balance-Whale-Widget) 0.3.17**
-做成一只**桌面宠物**，并合入 **dsh-rice-widget 0.3.4** 的「偷吃白饭」玩法。
+把小鲸鱼余额挂件 **[dsh-whale-widget](https://github.com/MeteorNOX/DeepSeek-Balance-Whale-Widget) 0.4.2**
+做成一只**桌面宠物**，并合入 **dsh-rice-widget 0.3.4** 的「偷吃白饭」玩法，另外还参考了dsh-pet的部分功能。
+本桌宠可能有不少bug（越修越多，实在修不好了），仅供娱乐。
 
-> ### ⚠️ 署名（上游要求，请勿删除）
+> ### ⚠️ 署名
 >
 > - 小鲸鱼挂件来自 **MeteorNOX/DeepSeek-Balance-Whale-Widget**：
 >   https://github.com/MeteorNOX/DeepSeek-Balance-Whale-Widget
@@ -11,21 +12,12 @@
 >
 > 本程序是**整合 / 移植的衍生作品**，非原创。完整来源与许可见
 > [`署名与许可.md`](署名与许可.md)、[`PROVENANCE.md`](PROVENANCE.md)、[`LICENSE`](LICENSE)。
-> **转发时请一并保留这些文件。**
 
 ---
 
 ## 一、怎么跑
 
 **双击根目录的 `大肥鱼桌宠.exe`** 就行 —— 那是**便携版单文件**（107MB），不用安装、不用 Node、不用命令行，拷到哪都能跑，也方便直接发给别人。
-
-启动更快的另一个选择：`dist\win-unpacked\大肥鱼桌宠.exe`（免安装目录版）。
-它是同一个程序的展开形态，**启动比便携版快几秒**（便携版每次要先解压到临时目录）。
-缺点是不能只拷那一个 exe，得整个 `win-unpacked` 文件夹一起。
-
-| 形态 | 路径 | 体积 | 说明 |
-|---|---|---|---|
-| 便携版（单文件） | `大肥鱼桌宠.exe` | 107 MB | 双击即用、方便分享；每次启动解压到临时目录，稍慢 |
 
 **首次使用**：托盘图标（右下角）→ 右键 →「设置 DeepSeek API Key…」填入你的 key，挂件才会显示余额。
 
@@ -70,7 +62,7 @@ npm run test:host                 # 只测宿主：路由 / 信任栅栏 / 异�
 
 ## 二、它做了什么
 
-### 2.1 底座：官方挂件 0.3.17（功能全保留）
+### 2.1 底座：官方挂件 0.4.2
 
 余额 / 今日已用 / 峰谷定价、自定义泡泡点击序列、逐行样式与字体、悬浮快捷编辑、
 音效与每轮消耗、自定义角色 / 动图 / 音效、吸附与翻转 —— 与网页版**同一份代码**。
