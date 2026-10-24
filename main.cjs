@@ -508,7 +508,10 @@ async function bootHost() {
         dataDir: DATA_DIR, rootDir: ROOT, log,
         onState: (st) => { onGameStateChanged(st) },
       })
-      gameMode.start()
+      // ⚠️ 延后 8 秒再启动：探针/光标采样是常驻 PowerShell 子进程，
+      //    启动瞬间连发会挤占渲染帧，桌宠的入场落位动画会被顿成"弹两下"
+      //    （用户报"打开时没固定在右下角，弹两下才回去"）。等她站稳再开。
+      setTimeout(() => { try { gameMode.start() } catch (err) { log('游戏模式启动失败：' + (err && err.message)) } }, 8000)
     } catch (err) { log('游戏模式启动失败：' + (err && err.message)); gameMode = null }
   }
 
