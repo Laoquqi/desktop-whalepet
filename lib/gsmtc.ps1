@@ -127,10 +127,11 @@ while ($true) {
   } catch {
     Emit @{ ok = $false; reason = [string]$_.Exception.Message }
   }
-  # 500ms (was 1500ms). `pos` is the value AT SAMPLE TIME, so the sparser the
-  # sampling, the further the lyrics drift behind the player -- at 1500ms they
-  # were consistently about half a beat late. GSMTC queries are cheap, so 3x
-  # the frequency has no noticeable cost.
+  # 200ms (was 1500ms -> 500ms). `pos` is the value AT SAMPLE TIME, so the
+  # sparser the sampling, the further the lyrics drift behind the player --
+  # at 1500ms they were consistently about half a beat late. GSMTC queries
+  # are cheap, so a high frequency has no noticeable cost. 200ms also makes
+  # seek/pause state changes reach the lyrics within one beat.
   # ASCII-ONLY on purpose: see the note at the top of this file.
-  Start-Sleep -Milliseconds 500
+  Start-Sleep -Milliseconds 200
 }

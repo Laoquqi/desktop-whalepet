@@ -47,6 +47,8 @@
   var lyBaseAt = 0          // 收到 pos 时的本地时间（performance.now）
   var lyTick = null
   var lyCurText = ''
+  var lyPaused = false      // 暂停冻结：true 时本地时钟停住，nowPos 恒为 lyBasePos
+  var lyRate = 1            // 本地时钟的推进倍速（取自播放器上报的 rate）
   var lastInfo = null
   var lastPos = -1        // 上一拍拿到的播放进度（判断"pos 有没有在走"）
   var lastLyLogAt = 0     // 歌词同步诊断日志的限流时间戳
@@ -210,7 +212,9 @@
   // --------------------------------------------------------------------------
   function nowPos() {
     if (lyBasePos < 0) return -1
-    return lyBasePos + (performance.now() - lyBaseAt) / 1000
+    if (lyPaused) return lyBasePos
+    // ⚠️ 要乘 rate：本地时钟模拟的是播放器进度，倍速播放时不乘会越差越多
+    return lyBasePos + (performance.now() - lyBaseAt) / 1000 * lyRate
   }
   function pickLine() {
     if (!lyLines.length) return ''
@@ -346,28 +350,59 @@
     // 有精确外推时：**每次推送都硬对齐**（livePos 就是此刻的真实位置）。
     // 没有 posAt 的老脚本才退回"软对齐"那套。
     const havePosAt = (typeof info.posAt === 'number' && info.posAt > 0)
+    const paused = (info.playing === false)
+    const rate = (Number(info.rate) > 0) ? Number(info.rate) : 1
     if (posOk && (havePosAt || resumed || !sameSong || posJumped)) {
       lyBasePos = livePos
       lyBaseAt = performance.now()
+      lyRate = rate
+      lyPaused = paused
+    } else if (paused && lyBasePos >= 0) {
+      // ⚠️ 暂停冻结：**本地时钟必须停住**（旧行为是继续自由跑 —— 用户报的
+      //   "暂停了歌词也会不同步"就是它：暂停/恢复之间歌词一直在走）。
+      //   冻在当前显示位置上，恢复播放时走下面的 resumed/resume 分支硬对齐。
+      if (!lyPaused) {
+        lyBasePos = nowPos()
+        lyBaseAt = performance.now()
+        lyPaused = true
+        lyRate = 1
+      }
+    } else if (lyPaused && lyBasePos >= 0) {
+      // 从冻结恢复（播放器没给可用 pos 的场合）：从冻住的位置继续走
+      lyBaseAt = performance.now()
+      lyPaused = false
+      lyRate = rate
     } else if (posAdvanced) {
-      const shown = lyBasePos + (performance.now() - lyBaseAt) / 1000
+      const shown = lyBasePos + (performance.now() - lyBaseAt) / 1000 * lyRate
       const err = livePos - shown
       if (Math.abs(err) > 1.2) {
         // 真的跑偏了 → 硬对齐
         lyBasePos = livePos
       } else {
         // 小偏差 → 只追一半：既不倒退、也没有锯齿。
-        // （采样间隔已从 1500ms 降到 500ms，追 50% 能在 1 秒内收敛，
+        // （采样间隔已是 200ms，追 50% 能在半秒内收敛，
         //   又不会因为单次抖动就跳。）
         lyBasePos = shown + err * 0.5
       }
       lyBaseAt = performance.now()
+      lyRate = rate
+      lyPaused = false
     } else if (lyBasePos < 0) {
       // pos 不可用（-1）或一直没锚过 → 从 0 起用本地时钟
       lyBasePos = 0
       lyBaseAt = performance.now()
+      lyRate = rate
+      lyPaused = paused
+    } else {
+      // pos 恒定没在走、且在播：本地时钟继续跑（倍速跟随上报值）
+      if (Math.abs(lyRate - rate) > 0.01) {
+        // 倍速变了 → 以当前显示位置重新锚定，避免时间基准错位
+        lyBasePos = nowPos()
+        lyBaseAt = performance.now()
+        lyRate = rate
+      }
+      if (lyPaused) { lyPaused = false; lyBaseAt = performance.now() }
     }
-    // 否则（pos 恒定没在走）：什么都不做，本地时钟继续跑
 
     // —— 限流诊断（每 ~10 秒一条）——
     // 实机"歌词对不上进度"时，这条日志能直接回答关键问题：
