@@ -45,10 +45,11 @@
   var lyState = 'none'      // none | loading | ready | notfound
   var lyBasePos = -1        // 收到 pos 时的播放位置
   var lyBaseAt = 0          // 收到 pos 时的本地时间（performance.now）
+  // 播放器**不给位置数据**时（酷狗就是），本地时钟是唯一权威。
+  // 暂停时必须"停表"：只冻结 lyBasePos、不再按 elapsed 往前走。
+  var lyPaused = false
   var lyTick = null
   var lyCurText = ''
-  var lyPaused = false      // 暂停冻结：true 时本地时钟停住，nowPos 恒为 lyBasePos
-  var lyRate = 1            // 本地时钟的推进倍速（取自播放器上报的 rate）
   var lastInfo = null
   var lastPos = -1        // 上一拍拿到的播放进度（判断"pos 有没有在走"）
   var lastLyLogAt = 0     // 歌词同步诊断日志的限流时间戳
@@ -212,9 +213,9 @@
   // --------------------------------------------------------------------------
   function nowPos() {
     if (lyBasePos < 0) return -1
+    // 暂停中：位置本来就该冻住，**不能**再按 elapsed 往前推
     if (lyPaused) return lyBasePos
-    // ⚠️ 要乘 rate：本地时钟模拟的是播放器进度，倍速播放时不乘会越差越多
-    return lyBasePos + (performance.now() - lyBaseAt) / 1000 * lyRate
+    return lyBasePos + (performance.now() - lyBaseAt) / 1000
   }
   function pickLine() {
     if (!lyLines.length) return ''
@@ -314,25 +315,47 @@
     //      · 换歌          → 硬对齐（必须）
     //      · pos 确实在走  → 只追**偏差**的一部分（软对齐，不倒退）
     //      · pos 不走/-1   → 完全不动，让本地时钟继续跑
+    // —— 先判断：这个播放器到底给不给「位置」——
+    // ⚠️⚠️ 酷狗实测（`_smtc-probe.log`：300ms × 25 秒 × 84 拍，中途拖过进度条、暂停过）：
+    //      pos   恒 0.000（拖进度条也不变）
+    //      posAt 恒 -11644473600000（WinRT 时间轴未初始化时的默认值）
+    //      dur / rate 恒 0
+    //    只有 title / artist / status 是有效的。
+    //    所以「pos = 0 且 posAt 无效」必须判成**没有位置** ——
+    //    否则 0 会被当成"位置 0"参与硬对齐，暂停→恢复时歌词会**跳回第一行**。
+    const posRaw = (typeof info.pos === 'number') ? info.pos : -1
+    const posAtRaw = (typeof info.posAt === 'number') ? info.posAt : -1
+    const havePosAt = posAtRaw > 0
+    const hasRealPos = (posRaw > 0) || havePosAt
+
     // —— 把"采样快照"换算成"此刻的真实播放位置" ——
     // ⚠️⚠️ **这是能不能准的关键。**
     //    info.pos 是 posAt 那一刻的快照（500ms 才采一次），直接拿它对齐最多差一整个
     //    采样间隔；两次采样之间用"本地时钟猜"又必然漂。有了 posAt 就能精确外推：
     //        livePos = pos + (现在 - posAt)/1000 * rate
     //    精度几十毫秒 —— 于是每次推送都可以放心**硬对齐**。
-    //    暂停时**不外推**（位置本来就该冻住）；老脚本没有 posAt 时退回采样值。
+    //    暂停时**不外推**（位置本来就该冻住）；没有位置数据时 livePos 保持 -1。
     let livePos = -1
-    if (typeof info.pos === 'number' && info.pos >= 0) {
-      if (typeof info.posAt === 'number' && info.posAt > 0) {
-        const ageMs = Date.now() - info.posAt
+    if (hasRealPos) {
+      if (havePosAt) {
+        const ageMs = Date.now() - posAtRaw
         const canExtrapolate = (info.playing !== false) && ageMs >= 0 && ageMs < 5000
-        livePos = info.pos + (canExtrapolate ? ageMs / 1000 * (Number(info.rate) || 1) : 0)
+        livePos = posRaw + (canExtrapolate ? ageMs / 1000 * (Number(info.rate) || 1) : 0)
       } else {
-        livePos = info.pos
+        livePos = posRaw
       }
     }
     const posOk = livePos >= 0
-    const posAdvanced = posOk && lastPos >= 0 && livePos > lastPos + 0.05
+    // 位置是**量化**的吗？（src=msaa → 从播放器界面读的整数秒，误差 ±0.5s）
+    // 量化数据不能每次硬对齐 —— 见下面 posOk 分支里那段长注释。
+    const quantizedPos = String(info.src || '') === 'msaa'
+    // ⚠️ 三个判断都要用**上一拍**的 lastPos，所以先把它记下来再更新。
+    //    `posFirst`（第一次拿到真位置）单独拎出来：酷狗那种 pos 恒 0 的播放器
+    //    永远走"无位置"分支，lastPos 一直是 -1；等它某天真的给了位置，
+    //    光靠 posJumped 是判不出来的（lastPos < 0 时那两条都是 false），
+    //    结果就是"位置变了但歌词不动"——自检里的换句用例第一次就是这么挂的。
+    const hadLastPos = lastPos >= 0
+    const posAdvanced = posOk && hadLastPos && livePos > lastPos + 0.05
     // —— 快进 / 快退（拖进度条、点进度条、切段落）——
     // ⚠️⚠️ **必须用"绝对差"判断，不能用"是否变大"。**
     //    采样间隔 500ms，正常播放两拍之间 pos 只涨 ~0.5s，
@@ -340,68 +363,107 @@
     //    只用 `pos > lastPos` 的话：**快退时 pos 是变小的**，
     //    posAdvanced 判不成立 → 会一路落到最后的"什么都不做" →
     //    本地时钟继续往前跑 → 歌词**留在后面不动**（这正是快退时的表现）。
-    const posJumped = posOk && lastPos >= 0 && Math.abs(livePos - lastPos) > 2
+    const posJumped = posOk && hadLastPos && Math.abs(livePos - lastPos) > 2
+    const posFirst = posOk && !hadLastPos
     if (posOk) lastPos = livePos
-    // **恢复播放**（上一拍暂停，这一拍在放）→ 必须硬对齐：
-    // 暂停期间时钟停了，而播放器可能已经跳到别处（拖了进度条/切了段），
-    // 一恢复就得重新对上，否则会一直差着。
+    // **恢复播放**（上一拍暂停，这一拍在放）
     const resumed = (info.playing !== false) && lastPlaying === false
-    // 换歌 / 恢复播放 / 快进快退 → 一律硬对齐（这三种情况本地时钟都不可信）
-    // 有精确外推时：**每次推送都硬对齐**（livePos 就是此刻的真实位置）。
-    // 没有 posAt 的老脚本才退回"软对齐"那套。
-    const havePosAt = (typeof info.posAt === 'number' && info.posAt > 0)
-    const paused = (info.playing === false)
-    const rate = (Number(info.rate) > 0) ? Number(info.rate) : 1
-    if (posOk && (havePosAt || resumed || !sameSong || posJumped)) {
-      lyBasePos = livePos
-      lyBaseAt = performance.now()
-      lyRate = rate
-      lyPaused = paused
-    } else if (paused && lyBasePos >= 0) {
-      // ⚠️ 暂停冻结：**本地时钟必须停住**（旧行为是继续自由跑 —— 用户报的
-      //   "暂停了歌词也会不同步"就是它：暂停/恢复之间歌词一直在走）。
-      //   冻在当前显示位置上，恢复播放时走下面的 resumed/resume 分支硬对齐。
-      if (!lyPaused) {
-        lyBasePos = nowPos()
-        lyBaseAt = performance.now()
-        lyPaused = true
-        lyRate = 1
-      }
-    } else if (lyPaused && lyBasePos >= 0) {
-      // 从冻结恢复（播放器没给可用 pos 的场合）：从冻住的位置继续走
-      lyBaseAt = performance.now()
-      lyPaused = false
-      lyRate = rate
-    } else if (posAdvanced) {
-      const shown = lyBasePos + (performance.now() - lyBaseAt) / 1000 * lyRate
-      const err = livePos - shown
-      if (Math.abs(err) > 1.2) {
-        // 真的跑偏了 → 硬对齐
-        lyBasePos = livePos
+    const pausedNow = info.playing === false
+
+    if (posOk) {
+      // ================================================================
+      // 暂停：有位置数据也要**停表**
+      // ================================================================
+      // 原来这里无条件 lyPaused = false，暂停时靠"每拍硬对齐到同一个 pos"
+      // 表面冻结 —— 位置不动，但基准每 500ms 被重设一次。
+      // 量化位置（MSAA）改成"只前进"之后这条路就不成立了：
+      // 界面秒数不变 → err 恒为负 → 什么都不做 → **本地时钟会继续往前跑**。
+      // 所以必须显式停表：把此刻的 elapsed 冻进 lyBasePos，nowPos() 直接返回它。
+      // 恢复时 resumed=true → 走下面的硬对齐，基准重新对上。
+      if (pausedNow) {
+        if (!lyPaused) {
+          lyBasePos = nowPos()
+          lyBaseAt = performance.now()
+          lyPaused = true
+        }
       } else {
-        // 小偏差 → 只追一半：既不倒退、也没有锯齿。
-        // （采样间隔已是 200ms，追 50% 能在半秒内收敛，
-        //   又不会因为单次抖动就跳。）
-        lyBasePos = shown + err * 0.5
-      }
-      lyBaseAt = performance.now()
-      lyRate = rate
-      lyPaused = false
-    } else if (lyBasePos < 0) {
-      // pos 不可用（-1）或一直没锚过 → 从 0 起用本地时钟
-      lyBasePos = 0
-      lyBaseAt = performance.now()
-      lyRate = rate
-      lyPaused = paused
+        lyPaused = false
+        // ================================================================
+        // 量化位置（src=msaa：从播放器界面上读的**整数秒**）
+        // ================================================================
+        // ⚠️⚠️ 这类数据和 smtc/elog 的毫秒级位置**必须区别对待**，否则会出现
+        //     用户实测的两个症状：歌词"这句↔上句"反复跳、而且整体稍慢。
+        //
+        //     机制：界面显示 02:02 时真实位置在 122.0~122.99 之间，我们只能拿到 122，
+        //     且 posAt 每次都设成"此刻"。如果照原样每次硬对齐：
+        //        第 1 拍：livePos=122.0 → lyBasePos=122.0（时钟拉回整数）
+        //        0.2s 后本地时钟走到 122.2
+        //        第 2 拍：界面还是 122 → livePos=122.05 → **又拉回 122.05**（倒退！）
+        //     于是位置永远在 [122, 122.3] 里锯齿，跨过句子边界就来回跳，
+        //     而且永远比真实慢半秒（界面跳到 123 之前，我们到不了 123）。
+        //
+        //     解法：量化位置**只前进、不倒退**。
+        //       · 界面比我们快（err > 0）→ 小幅追（40%），收敛但不抖
+        //       · 界面比我们慢（err ≤ 0，量化误差或还没刷新）→ **什么都不做**
+        //       · 明显偏离（err > 1.5s）→ 那是真 seek，硬对齐
+        //     换歌 / 恢复 / 第一次拿到位置 仍然走硬对齐（那几种情况基准本来就不可信）。
+        if (quantizedPos && sameSong && !resumed && !posJumped && !posFirst && lyBasePos >= 0) {
+          const shown = lyBasePos + (performance.now() - lyBaseAt) / 1000
+          const err = livePos - shown
+          if (err > 1.5) {
+            // 真 seek（界面秒数跳了一大截）→ 硬对齐
+            lyBasePos = livePos
+            lyBaseAt = performance.now()
+          } else if (err > 0.05) {
+            // 界面比我们快一点 → 追 40%，2~3 拍收敛，不会因为 1 秒的量化误差就跳
+            lyBasePos = shown + err * 0.4
+            lyBaseAt = performance.now()
+          }
+          // else：界面比我们慢（量化误差 / 还没刷新到下一秒）→ 保持本地时钟，
+          //       **不改 lyBasePos**，这是"不倒退"的关键
+        } else if (havePosAt || resumed || !sameSong || posJumped || posFirst) {
+          // 换歌 / 恢复播放 / 快进快退 / 第一次拿到位置 → 一律硬对齐
+          // （毫秒级的 smtc/elog 走这里，每次都硬对齐是对的）
+          lyBasePos = livePos
+          lyBaseAt = performance.now()
+        } else if (posAdvanced) {
+          const shown = lyBasePos + (performance.now() - lyBaseAt) / 1000
+          const err = livePos - shown
+          if (Math.abs(err) > 1.2) {
+            // 真的跑偏了 → 硬对齐
+            lyBasePos = livePos
+          } else {
+            // 小偏差 → 只追一半：既不倒退、也没有锯齿。
+            // （采样间隔已从 1500ms 降到 500ms，追 50% 能在 1 秒内收敛，
+            //   又不会因为单次抖动就跳。）
+            lyBasePos = shown + err * 0.5
+          }
+          lyBaseAt = performance.now()
+        } else if (lyBasePos < 0) {
+          // pos 不可用（-1）或一直没锚过 → 从 0 起用本地时钟
+          lyBasePos = 0
+          lyBaseAt = performance.now()
+        }
+      }   // ← if (pausedNow) 的 else 结束
     } else {
-      // pos 恒定没在走、且在播：本地时钟继续跑（倍速跟随上报值）
-      if (Math.abs(lyRate - rate) > 0.01) {
-        // 倍速变了 → 以当前显示位置重新锚定，避免时间基准错位
-        lyBasePos = nowPos()
+      // ===== 没有位置数据（酷狗）：**本地时钟是唯一权威** =====
+      // 三条规则，一条都不能少：
+      //   ① 换歌 / 还没锚过 → 从 0 起（否则会沿用上一首的进度）
+      //   ② 暂停 → **停表**（把此刻的 elapsed 冻进 lyBasePos，之后 nowPos() 不再走）
+      //   ③ 恢复 → **续走**（只重置基准时刻，不动 lyBasePos）
+      // 注意这里**绝不**把任何 pos 值写进 lyBasePos —— 没有数据就别假装有。
+      // 代价：酷狗拖进度条**无法感知**（数据源里就没有），只能靠换歌/暂停来纠。
+      if (!sameSong || lyBasePos < 0) {
+        lyBasePos = 0
         lyBaseAt = performance.now()
-        lyRate = rate
+        lyPaused = false
+      } else if (pausedNow && !lyPaused) {
+        lyBasePos = nowPos()
+        lyPaused = true
+      } else if (!pausedNow && lyPaused) {
+        lyPaused = false
+        lyBaseAt = performance.now()
       }
-      if (lyPaused) { lyPaused = false; lyBaseAt = performance.now() }
     }
 
     // —— 限流诊断（每 ~10 秒一条）——
@@ -413,8 +475,10 @@
       var nowMs = performance.now()
       if (nowMs - lastLyLogAt > 10000) {
         lastLyLogAt = nowMs
-        var shownNow = lyBasePos >= 0 ? (lyBasePos + (nowMs - lyBaseAt) / 1000) : -1
-        var mode = !posOk ? '本地时钟(pos无效)'
+        var shownNow = nowPos()
+        var mode = !posOk
+          ? (lyPaused ? '暂停(停表/无位置数据)' : '本地时钟(无位置数据)')
+          : lyPaused ? '暂停(停表)'
           : havePosAt ? '外推硬对齐'
           : posJumped ? '硬对齐(快进快退)'
           : posAdvanced ? (Math.abs(livePos - shownNow) > 1.2 ? '硬对齐' : '软对齐')
